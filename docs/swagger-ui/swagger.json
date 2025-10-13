@@ -1,0 +1,949 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "version": "0.0.1",
+    "title": "carmate",
+    "description": "Api documentation for carmate",
+    "termsOfService": "terms",
+    "contact": {
+      "name": "Umer Shehzad",
+      "url": "umershehzad.st@gmail.com",
+      "email": "umershehzad.st@gmail.com"
+    },
+    "license": {
+      "name": "MIT",
+      "url": "http://opensource.org/licenses/MIT"
+    }
+  },
+  "host": "",
+  "basePath": "/api/v1",
+  "paths": {
+    "/user/signup": {
+      "post": {
+        "summary": "Signup",
+        "description": "This service can register a new user",
+        "operationId": "user-signup",
+        "tags": [
+          "User"
+        ],
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "description": "Pass the object with username, email, password",
+            "schema": {
+              "type": "object",
+              "required": [
+                "username",
+                "email",
+                "password"
+              ],
+              "properties": {
+                "username": {
+                  "type": "string",
+                  "example": "umershehzad1"
+                },
+                "email": {
+                  "type": "string",
+                  "example": "umershehzad.st@gmail.com"
+                },
+                "password": {
+                  "type": "string",
+                  "example": "CHmod512"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "schema": {
+              "$ref": "#/definitions/successUser"
+            }
+          },
+          "400": {
+            "description": "Validation Error"
+          },
+          "409": {
+            "description": "User Already Exist!"
+          },
+          "500": {
+            "description": "Internal Server Error!"
+          }
+        }
+      }
+    },
+    "/user/login": {
+      "post": {
+        "summary": "Login",
+        "description": "This server helps user to login",
+        "operationId": "user-signin",
+        "tags": [
+          "User"
+        ],
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "description": "Path the object with emailOrUsername & password",
+            "schema": {
+              "type": "object",
+              "required": [
+                "emailOrUsername",
+                "password"
+              ],
+              "properties": {
+                "emailOrUsername": {
+                  "type": "string",
+                  "example": "umershehzad.st@gmail.com"
+                },
+                "password": {
+                  "type": "string",
+                  "example": "CHmod512"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "schema": {
+              "$ref": "#/definitions/successUser"
+            }
+          },
+          "400": {
+            "description": "Validation Error"
+          },
+          "401": {
+            "description": "Invalid Password"
+          },
+          "404": {
+            "description": "User Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/user/verify-token": {
+      "get": {
+        "summary": "Verify Token",
+        "description": "This service verifies the user's token",
+        "operationId": "verify-token",
+        "tags": [
+          "User"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Connection Unautherized!"
+          },
+          "404": {
+            "description": "Token Not found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/user/": {
+      "get": {
+        "summary": "My Profile",
+        "description": "This service returns the user profile",
+        "operationId": "user-me",
+        "tags": [
+          "User"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Connection Unautherized!"
+          },
+          "404": {
+            "description": "Token Not found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Profile",
+        "description": "This server helps user to update his/her profile",
+        "operationId": "user-edit",
+        "tags": [
+          "User"
+        ],
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "description": "Path the object with username, image, address, phone",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "username": {
+                  "type": "string",
+                  "example": "umershehzad1"
+                },
+                "image": {
+                  "type": "string",
+                  "example": "http://localhost:3000/public/upload/default.png"
+                },
+                "address": {
+                  "type": "string",
+                  "example": "address"
+                },
+                "phone": {
+                  "type": "string",
+                  "example": "090078601"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok"
+          },
+          "400": {
+            "description": "Validation Error"
+          },
+          "401": {
+            "description": "Connection Unautherized!"
+          },
+          "404": {
+            "description": "Token Not found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/user/forget-password": {
+      "post": {
+        "summary": "Forget Password",
+        "description": "Forget password service sends user new password",
+        "operationId": "user-forget-password",
+        "tags": [
+          "User"
+        ],
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "description": "Path the object with email",
+            "schema": {
+              "type": "object",
+              "required": [
+                "email"
+              ],
+              "properties": {
+                "email": {
+                  "type": "string",
+                  "example": "umershehzad.st@gmail.com"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok"
+          },
+          "400": {
+            "description": "Validation Error"
+          },
+          "404": {
+            "description": "User Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/user/reset-password": {
+      "post": {
+        "summary": "Reset Password",
+        "description": "Reset password service send object with code and password",
+        "operationId": "user-reset-password",
+        "tags": [
+          "User"
+        ],
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "description": "Path the object with email",
+            "schema": {
+              "type": "object",
+              "required": [
+                "email",
+                "code",
+                "password"
+              ],
+              "properties": {
+                "email": {
+                  "type": "string",
+                  "example": "umershehzad.st@gmail.com"
+                },
+                "code": {
+                  "type": "string",
+                  "example": 123456
+                },
+                "password": {
+                  "type": "string",
+                  "example": "CHmod512"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok"
+          },
+          "400": {
+            "description": "Validation Error"
+          },
+          "404": {
+            "description": "User Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/upload/": {
+      "post": {
+        "summary": "Upload",
+        "description": "This service upload the attachment and return the reponse. File limit (2MB)",
+        "operationId": "upload",
+        "tags": [
+          "Upload"
+        ],
+        "parameters": [
+          {
+            "name": "attachment",
+            "in": "formData",
+            "description": "Upload attachment through form-data",
+            "required": true,
+            "type": "file"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok"
+          },
+          "401": {
+            "description": "Connection Unautherized!"
+          },
+          "404": {
+            "description": "Token Not found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/exercise/": {
+      "post": {
+        "summary": "Create Exercise",
+        "description": "This server helps user to create exercise",
+        "operationId": "exercise-create",
+        "tags": [
+          "Exercise"
+        ],
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "description": "Path the object with exercise name, category, instructions, equipments, focusArea, benefits and video",
+            "schema": {
+              "type": "object",
+              "required": [
+                "name",
+                "category",
+                "instructions",
+                "equipments",
+                "focusArea",
+                "benefits",
+                "video"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "example": "Lower Back"
+                },
+                "category": {
+                  "type": "string",
+                  "example": "Other"
+                },
+                "instructions": {
+                  "type": "string",
+                  "example": ""
+                },
+                "equipments": {
+                  "type": "string",
+                  "example": ""
+                },
+                "focusArea": {
+                  "type": "string",
+                  "example": ""
+                },
+                "benefits": {
+                  "type": "string",
+                  "example": ""
+                },
+                "video": {
+                  "type": "string",
+                  "example": ""
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok"
+          },
+          "400": {
+            "description": "Validation Error"
+          },
+          "404": {
+            "description": "User Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "get": {
+        "summary": "Get All Exercises",
+        "description": "This server helps user to get all exercises",
+        "operationId": "exercise-get-all",
+        "tags": [
+          "Exercise"
+        ],
+        "responses": {
+          "200": {
+            "description": "ok"
+          },
+          "400": {
+            "description": "Validation Error"
+          },
+          "404": {
+            "description": "Token Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/exercise/category/{category_id}": {
+      "get": {
+        "summary": "Get Exercises By Category",
+        "description": "This service helps user to get all exercises by their categories",
+        "operationId": "exercise-get-all-category",
+        "tags": [
+          "Exercise"
+        ],
+        "parameters": [
+          {
+            "name": "category_id",
+            "in": "path",
+            "description": "Enter Category ID",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok"
+          },
+          "401": {
+            "description": "Connection Unautherized!"
+          },
+          "404": {
+            "description": "Token Not found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/workout/": {
+      "post": {
+        "summary": "Create Workout",
+        "description": "This server helps user to create workout",
+        "operationId": "workout-create",
+        "tags": [
+          "Workout"
+        ],
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "description": "Path the object with exercise name, and exercises array",
+            "schema": {
+              "type": "object",
+              "required": [
+                "name",
+                "exercises",
+                "workoutInstructions"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "example": "Lower Back"
+                },
+                "workoutInstructions": {
+                  "type": "string",
+                  "example": "Workout Instructions"
+                },
+                "exercises": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "exercise": {
+                        "type": "string",
+                        "description": "ID of the exercise"
+                      },
+                      "reps": {
+                        "type": "integer",
+                        "description": "Number of repetitions for the exercise",
+                        "default": 2
+                      },
+                      "waitTime": {
+                        "type": "integer",
+                        "description": "Waiting time between sets (in seconds)",
+                        "default": 30
+                      },
+                      "exerciseInstructions": {
+                        "type": "string",
+                        "description": "Exercise Instructions"
+                      }
+                    }
+                  },
+                  "example": [
+                    {
+                      "exercise": "Exercise1_id",
+                      "sets": 3,
+                      "reps": 10,
+                      "waitTime": 45,
+                      "exerciseInstructions": "instruction One"
+                    },
+                    {
+                      "exercise": "Exercise2_id",
+                      "sets": 2,
+                      "reps": 12,
+                      "waitTime": 30,
+                      "exerciseInstructions": "instruction Two"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok"
+          },
+          "400": {
+            "description": "Validation Error"
+          },
+          "404": {
+            "description": "Token Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "get": {
+        "summary": "Get All Workout",
+        "description": "This service helps user to get all workouts",
+        "operationId": "workout-get-all",
+        "tags": [
+          "Workout"
+        ],
+        "responses": {
+          "200": {
+            "description": "ok"
+          },
+          "400": {
+            "description": "Validation Error"
+          },
+          "404": {
+            "description": "Token Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/workout/generate-link": {
+      "post": {
+        "summary": "Generate Workout Link",
+        "description": "This service helps user to generate workout link",
+        "operationId": "workout-generate-link",
+        "tags": [
+          "Workout"
+        ],
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "description": "Path the object with workout id",
+            "schema": {
+              "type": "object",
+              "required": [
+                "workout_id"
+              ],
+              "properties": {
+                "workout_id": {
+                  "type": "string",
+                  "example": "Workout ID"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok"
+          },
+          "400": {
+            "description": "Validation Error"
+          },
+          "404": {
+            "description": "Token Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/trainee/join": {
+      "post": {
+        "summary": "Join Workout",
+        "description": "This service helps user to join workout",
+        "operationId": "join-workout",
+        "tags": [
+          "Trainee"
+        ],
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "description": "Path the object with workout id",
+            "schema": {
+              "type": "object",
+              "required": [
+                "workout_id"
+              ],
+              "properties": {
+                "workout_id": {
+                  "type": "string",
+                  "example": "Workout_id"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok"
+          },
+          "400": {
+            "description": "Validation Error"
+          },
+          "404": {
+            "description": "Token Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/trainee/": {
+      "get": {
+        "summary": "Get Shared Workouts",
+        "description": "This service helps user to get all shared workouts",
+        "operationId": "get-shared-workout",
+        "tags": [
+          "Trainee"
+        ],
+        "responses": {
+          "200": {
+            "description": "ok"
+          },
+          "400": {
+            "description": "Validation Error"
+          },
+          "404": {
+            "description": "Token Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/trainee/{workout_id}": {
+      "put": {
+        "summary": "Edit Shared Workouts",
+        "description": "This service helps user to edit shared workouts status and add video",
+        "operationId": "edit-shared-workout",
+        "tags": [
+          "Trainee"
+        ],
+        "parameters": [
+          {
+            "name": "workout_id",
+            "in": "path",
+            "description": "Enter Wokrout ID",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "description": "Path the object with workout status or video url",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "example": "completed"
+                },
+                "video": {
+                  "type": "string",
+                  "example": ""
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok"
+          },
+          "400": {
+            "description": "Validation Error"
+          },
+          "404": {
+            "description": "Token Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/trainee/workout/{workout_id}": {
+      "get": {
+        "summary": "Get All Workout trainees",
+        "description": "This service helps user to get all workout trainees",
+        "operationId": "get-workout-trainees",
+        "tags": [
+          "Trainee"
+        ],
+        "parameters": [
+          {
+            "name": "workout_id",
+            "in": "path",
+            "description": "Enter Wokrout ID",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok"
+          },
+          "400": {
+            "description": "Validation Error"
+          },
+          "404": {
+            "description": "Token Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/trainee/evaluate-trainee/{workout_id}": {
+      "put": {
+        "summary": "Evaluate Trainee",
+        "description": "This service helps trainer to edit isVerified, feedback & feedbackMedia",
+        "operationId": "evaluate-trainee",
+        "tags": [
+          "Trainee"
+        ],
+        "parameters": [
+          {
+            "name": "workout_id",
+            "in": "path",
+            "description": "Enter Wokrout ID",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "description": "Path the object with trainee isVerfied, feedback feedbackMedia",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "isVerified": {
+                  "type": "boolean",
+                  "example": true
+                },
+                "feedback": {
+                  "type": "string",
+                  "example": ""
+                },
+                "feedbackMedia": {
+                  "type": "string",
+                  "example": ""
+                },
+                "processingVideoId": {
+                  "type": "string",
+                  "example": ""
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok"
+          },
+          "400": {
+            "description": "Validation Error"
+          },
+          "404": {
+            "description": "Token Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/trainee/status/{status}": {
+      "get": {
+        "summary": "Get Shared Workouts By Status",
+        "description": "This service helps user to get all shared workouts by their statuses the statuses can be pending completed",
+        "operationId": "get-status-workout",
+        "tags": [
+          "Trainee"
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "path",
+            "description": "Enter Status i.e pending, start, completed",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok"
+          },
+          "400": {
+            "description": "Validation Error"
+          },
+          "404": {
+            "description": "Token Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "successUser": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "object",
+          "properties": {
+            "_id": {
+              "type": "integer",
+              "format": "int64",
+              "example": "5ac9222e4a73822ca4883b4b"
+            },
+            "username": {
+              "type": "string",
+              "example": "umershehzad1"
+            },
+            "email": {
+              "type": "string",
+              "example": "umershehzad.st@gmail.com"
+            },
+            "phone": {
+              "type": "string",
+              "example": "090078601"
+            },
+            "address": {
+              "type": "string",
+              "example": ""
+            },
+            "image": {
+              "type": "string",
+              "example": ""
+            },
+            "xp": {
+              "type": "number",
+              "example": 1
+            },
+            "threshold": {
+              "type": "number",
+              "example": 50
+            },
+            "rank": {
+              "type": "number",
+              "example": 1
+            },
+            "roles": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "example": "user"
+              }
+            },
+            "token": {
+              "type": "string",
+              "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI1YWM5MjIyZTRhNzM4MjJjYTQ4ODNiNGIiLCJuYW1lIjoidW1lciIsImVtYWlsIjoic2hhaHphZC5udDFAZ21haWwuY29tIiwicm9sZXMiOlsidXNlciJdLCJsb2NhdGlvbiI6eyJjb29yZGluYXRlcyI6eyJsbmciOiItODQuMzc4OSIsImxhdCI6IjMzLjc0ODkifSwiY291bnRyeSI6IlVuaXRlZCBTdGF0ZXMiLCJjaXR5IjoiQXRsYW50YSJ9LCJhdmF0YXIiOiIiLCJpYXQiOjE1MjMxMzA5MjZ9.OYfNI7A-EFjQXjXGtgNiIsx388-41LSCPsrrBh2oEUQ"
+            }
+          }
+        }
+      }
+    }
+  }
+}
