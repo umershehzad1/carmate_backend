@@ -1,27 +1,26 @@
-'use strict';
-const { Model } = require('sequelize');
+"use strict";
+const { Model } = require("sequelize");
 
 module.exports = (sequelize, DataTypes) => {
   class TestDriveRequest extends Model {
     static associate(models) {
       // Each test drive request belongs to a customer (user)
       TestDriveRequest.belongsTo(models.User, {
-        foreignKey: 'userId',
-        as: 'customer',
-        onDelete: 'CASCADE'
+        foreignKey: "userId",
+        as: "customer",
+        onDelete: "CASCADE",
       });
 
       // Each test drive request belongs to a vehicle
       TestDriveRequest.belongsTo(models.Vehicle, {
-        foreignKey: 'vehicleId',
-        as: 'vehicle',
-        onDelete: 'CASCADE'
+        foreignKey: "vehicleId",
+        as: "vehicle",
+        onDelete: "CASCADE",
       });
       TestDriveRequest.hasMany(models.Notifications, {
-  foreignKey: 'testDriveRequestId',
-  as: 'notifications'
-});
-
+        foreignKey: "testDriveRequestId",
+        as: "notifications",
+      });
     }
   }
 
@@ -30,22 +29,22 @@ module.exports = (sequelize, DataTypes) => {
       userId: {
         type: DataTypes.INTEGER,
         allowNull: false,
-        references: { model: 'Users', key: 'id' }
+        references: { model: "Users", key: "id" },
       },
       vehicleId: {
         type: DataTypes.INTEGER,
         allowNull: false,
-        references: { model: 'Vehicles', key: 'id' }
+        references: { model: "Vehicles", key: "id" },
       },
       requestedDate: {
         type: DataTypes.DATE,
-        allowNull: false
-      }
+        allowNull: false,
+      },
     },
     {
       sequelize,
-      modelName: 'TestDriveRequest',
-      timestamps: true
+      modelName: "TestDriveRequest",
+      timestamps: true,
     }
   );
 

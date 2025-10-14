@@ -20,7 +20,7 @@
  let morgan   		= require('morgan');
  let bodyParser 	= require('body-parser');
 
- let api 			= require('../routes/api');
+ let api 			= require('../routes/UserRoutes');
  let web 			= require('../routes/web');
 
  let app 			= express();

@@ -42,4 +42,19 @@ let  o = {}
         })
     }
 
+    // Admin authorization middleware
+o.isAdmin = (req, res, next) => {
+    // Ensure user is authenticated first
+    if (!req.decoded) {
+        return json.errorResponse(res, 'Unauthorized access!', 401);
+    }
+
+    // Check if the user role is admin
+    if (req.decoded.role && req.decoded.role === 'admin') {
+        next(); // User is admin, proceed
+    } else {
+        return json.errorResponse(res, 'Admin access required!', 403);
+    }
+};
+
 module.exports = o;
