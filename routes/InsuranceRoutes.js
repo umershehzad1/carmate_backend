@@ -4,7 +4,7 @@ const express = require("express");
 const multer = require("multer");
 
 /** Controllers **/
-const dealerCtrl = require("../app/Http/Controllers/v1/DealerController");
+const insuranceCtrl = require("../app/Http/Controllers/v1/InsuranceController");
 const authCtrl = require("../app/Http/Controllers/v1/AuthController");
 const uploadCtrl = require("../app/Http/Controllers/v1/UploadController");
 const upload = multer({
@@ -14,9 +14,13 @@ const upload = multer({
 
 const router = express.Router();
 
-router.route("/getalldealers").get(dealerCtrl.getAllDealers);
-router.route("/:id").get(dealerCtrl.getDealerDetails);
-router.route("/").patch(authCtrl.authenticate, dealerCtrl.updateDealer);
-router.route("/").delete(authCtrl.authenticate, dealerCtrl.deleteDealer);
+router.route("/getallinsurances").get(insuranceCtrl.getAllInsurance);
+router.route("/:id").get(insuranceCtrl.getInsurnaceProfile);
+router
+  .route("/")
+  .patch(authCtrl.authenticate, insuranceCtrl.updateInsuranceProfile);
+router
+  .route("/")
+  .delete(authCtrl.authenticate, insuranceCtrl.deleteInsuranceProfile);
 
 module.exports = router;

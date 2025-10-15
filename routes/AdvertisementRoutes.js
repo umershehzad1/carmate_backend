@@ -1,0 +1,32 @@
+"use strict";
+
+const express = require("express");
+const multer = require("multer");
+
+/** Controllers **/
+const advertisementCtrl = require("../app/Http/Controllers/v1/AdvertisementController");
+const authCtrl = require("../app/Http/Controllers/v1/AuthController");
+const uploadCtrl = require("../app/Http/Controllers/v1/UploadController");
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 500 * 1024 * 1024 },
+});
+
+const router = express.Router();
+
+router
+  .route("/createad")
+  .post(authCtrl.authenticate, advertisementCtrl.createAd);
+
+router
+  .route("/getallads")
+  .get(authCtrl.authenticate, advertisementCtrl.getAllAds);
+router.route("/:id").get(advertisementCtrl.getAdDetails);
+router
+  .route("/:id")
+  .patch(authCtrl.authenticate, advertisementCtrl.updateAdStatus);
+router.route("/:id").delete(authCtrl.authenticate, advertisementCtrl.deleteAd);
+router
+  .route("/extendadcompaign/:id")
+  .patch(authCtrl.authenticate, advertisementCtrl.extendAdCompaign);
+module.exports = router;

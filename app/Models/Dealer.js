@@ -48,6 +48,11 @@ module.exports = (sequelize, DataTypes) => {
           userReviews: [],
         },
       },
+      availableCarListing: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        defaultValue: 0,
+      },
     },
     {
       sequelize,

@@ -4,7 +4,7 @@ const express = require("express");
 const multer = require("multer");
 
 /** Controllers **/
-const dealerCtrl = require("../app/Http/Controllers/v1/DealerController");
+const repairCtrl = require("../app/Http/Controllers/v1/RepairController");
 const authCtrl = require("../app/Http/Controllers/v1/AuthController");
 const uploadCtrl = require("../app/Http/Controllers/v1/UploadController");
 const upload = multer({
@@ -14,9 +14,9 @@ const upload = multer({
 
 const router = express.Router();
 
-router.route("/getalldealers").get(dealerCtrl.getAllDealers);
-router.route("/:id").get(dealerCtrl.getDealerDetails);
-router.route("/").patch(authCtrl.authenticate, dealerCtrl.updateDealer);
-router.route("/").delete(authCtrl.authenticate, dealerCtrl.deleteDealer);
+router.route("/getallrepairs").get(repairCtrl.getAllRepairs);
+router.route("/:id").get(repairCtrl.getRepairDetails);
+router.route("/").patch(authCtrl.authenticate, repairCtrl.updateRepairProfile);
+router.route("/").delete(authCtrl.authenticate, repairCtrl.deleteRepairProfile);
 
 module.exports = router;

@@ -1,8 +1,7 @@
-'use strict'
+"use strict";
 
-module.exports = { 
-
-    /*
+module.exports = {
+  /*
     |--------------------------------------------------------------------------
     | Third Party Services
     |--------------------------------------------------------------------------
@@ -14,30 +13,29 @@ module.exports = {
     |
     */
 
-    'facebook_token' : {
-        'client_id' : 'CLIENT_ID',
-        'client_secret' : 'CLIENT_SECRET'
-    },
+  facebook_token: {
+    client_id: "CLIENT_ID",
+    client_secret: "CLIENT_SECRET",
+  },
 
-    'mailgun' : {
-        'domain' : 'MAILGUN_DOMAIN',
-        'secret' : 'MAILGUN_SECRET',
-    },
+  mailgun: {
+    domain: "MAILGUN_DOMAIN",
+    secret: "MAILGUN_SECRET",
+  },
 
-    'ses' : {
-        'key' : 'SES_KEY',
-        'secret' : 'SES_SECRET',
-        'region' : 'us-east-1',
-    },
+  ses: {
+    key: "SES_KEY",
+    secret: "SES_SECRET",
+    region: "us-east-1",
+  },
 
-    'sparkpost' : {
-        'secret' : 'SPARKPOST_SECRET',
-    },
+  sparkpost: {
+    secret: "SPARKPOST_SECRET",
+  },
 
-    'stripe' : {
-        'model' : '',
-        'key' : 'STRIPE_KEY',
-        'secret' : 'STRIPE_SECRET',
-    },
-
-}
+  stripe: {
+    model: "",
+    key: "STRIPE_KEY",
+    secret: "STRIPE_SECRET",
+  },
+};

@@ -6,7 +6,7 @@ const slugify = require("slugify");
 const json = require("../../../Traits/ApiResponser"); // Your custom response helper
 const db = require("../../../Models/index");
 const { Op, where } = require("sequelize");
-const Dealer = db.Dealer;
+const Insurance = db.Insurance;
 const Vehicle = db.Vehicle;
 const User = db.User;
 // Sequential field validation function
@@ -21,7 +21,7 @@ function validateRequiredFieldsSequentially(body, requiredFields) {
 
 const o = {};
 
-o.getAllDealers = async function (req, res, next) {
+o.getAllInsurance = async function (req, res, next) {
   try {
     const { page = 1, limit = 10, search } = req.query;
     const offset = (page - 1) * limit;
@@ -33,13 +33,13 @@ o.getAllDealers = async function (req, res, next) {
     }
 
     // Fetch dealers with pagination
-    const { rows: dealers, count: total } = await Dealer.findAndCountAll({
+    const { rows: insurances, count: total } = await Insurance.findAndCountAll({
       where,
       include: [
         {
           model: User,
           as: "user",
-          attributes: ["id", "fullname", "email", "phone", "image"],
+          attributes: { exclude: ["password"] },
         },
       ],
       limit: parseInt(limit),
@@ -49,115 +49,88 @@ o.getAllDealers = async function (req, res, next) {
 
     const totalPages = Math.ceil(total / limit);
 
-    if (!dealers || dealers.length === 0) {
-      return json.errorResponse(res, "No dealers found", 404);
+    if (!insurances || insurances.length === 0) {
+      return json.errorResponse(res, "No insurances found", 404);
     }
 
     return json.successResponse(res, {
       currentPage: parseInt(page),
       totalPages,
       totalRecords: total,
-      dealers,
+      insurances,
     });
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }
 };
 
-o.getDealerDetails = async function (req, res, next) {
+o.getInsurnaceProfile = async function (req, res, next) {
   try {
     const { id } = req.params;
-    const dealer = await Dealer.findByPk(id, {
+    const insurance = await Insurance.findByPk(id, {
       include: [
         {
           model: User,
           as: "user",
-          attributes: ["id", "fullname", "email", "phone", "image"],
+          attributes: { exclude: ["password"] },
         },
       ],
     });
-    if (!dealer) {
-      return json.errorResponse(res, "Dealer not found", 404);
+
+    if (!insurance) {
+      return json.errorResponse(res, "Insurance not found", 404);
     }
-    return json.showOne(res, dealer, 200);
+    return json.showOne(res, insurance, 200);
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }
 };
 
-o.updateDealer = async function (req, res, next) {
+o.updateInsuranceProfile = async function (req, res, next) {
   try {
-    // Ensure only dealers can update their profile
-    if (req.decoded.role !== "dealer") {
+    const user = req.decoded;
+    if (user.role !== "insurance") {
       return json.errorResponse(
         res,
         "You are not authorized to perform this action",
         403
       );
     }
-
-    const userId = req.decoded.id;
-
-    // Step 1: Find dealer by userId (the logged-in dealer)
-    const dealer = await Dealer.findOne({
-      where: { userId },
+    const insurance = await Insurance.findOne({
+      where: { userId: user.id },
     });
 
-    if (!dealer) {
-      return json.errorResponse(res, "Dealer not found", 404);
+    if (!insurance) {
+      return json.errorResponse(res, "Insurance not found", 404);
     }
 
-    // Step 2: Update the dealer record with provided fields
-    const updatedDealer = await dealer.update(req.body);
-
-    // Step 3: Return response
-    return json.successResponse(
-      res,
-      "Dealer profile updated successfully.",
-      200
-    );
+    const updatedInsurance = await insurance.update(req.body);
+    return json.showOne(res, "Insurance Profile Updated Successfully", 200);
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }
 };
 
-o.deleteDealer = async function (req, res, next) {
+o.deleteInsuranceProfile = async function (req, res, next) {
   try {
-    // Ensure only dealers can perform this action
-    if (req.decoded.role !== "dealer") {
+    const user = req.decoded;
+    if (user.role !== "insurance") {
       return json.errorResponse(
         res,
         "You are not authorized to perform this action",
         403
       );
     }
-
-    const userId = req.decoded.id;
-    // Step 1: Find dealer by userId
-    const dealer = await Dealer.findOne({
-      where: { userId },
+    const insurance = await Insurance.findOne({
+      where: { userId: user.id },
     });
 
-    if (!dealer) {
-      return json.errorResponse(res, "Dealer not found", 404);
+    if (!insurance) {
+      return json.errorResponse(res, "Insurance not found", 404);
     }
 
-    // Step 2: Delete dealer record
-    await dealer.destroy();
-
-    // Step 3: Optionally, update user's role back to 'user' (recommended)
-    const user = await User.findByPk(userId);
-    if (user) {
-      user.role = "user";
-      await user.save();
-    }
-
-    // Step 4: Send response
-    return json.successResponse(
-      res,
-      "Dealer account deleted successfully.",
-      200
-    );
+    await insurance.destroy();
+    return json.showOne(res, "Insurance Profile Deleted Successfully", 200);
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }

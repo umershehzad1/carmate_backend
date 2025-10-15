@@ -10,6 +10,11 @@ const testDriveRequestRoutes = require("./routes/TestDriveRequestsRoutes");
 const contactRoutes = require("./routes/ContactRoutes");
 const reportsRoutes = require("./routes/ReportsRoutes");
 const dealerRoutes = require("./routes/DealerRoutes");
+const refferalRoutes = require("./routes/ReferralRoutes");
+const repairRoutes = require("./routes/RepairRoutes");
+const insuranceRoutes = require("./routes/InsuranceRoutes");
+const advertisementRoutes = require("./routes/AdvertisementRoutes");
+const subscriptionRoutes = require("./routes/SubscriptionRoutes");
 /*
  |--------------------------------------------------------------------------
  | Node_framwork - A Node Framework For Website & apis
@@ -24,6 +29,8 @@ const express = require("express");
 // const autoload = require('./bootstrap/autoload');
 
 let app = express();
+
+app.use("/api/stripe", require("./routes/StripeWebhook"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 // app.use('/', autoload);
@@ -35,6 +42,11 @@ app.use("/api/v1/testdriverequest", testDriveRequestRoutes);
 app.use("/api/v1/contact", contactRoutes);
 app.use("/api/v1/report", reportsRoutes);
 app.use("/api/v1/dealer", dealerRoutes);
+app.use("/api/v1/referral", refferalRoutes);
+app.use("/api/v1/repair", repairRoutes);
+app.use("/api/v1/insurance", insuranceRoutes);
+app.use("/api/v1/advertisement", advertisementRoutes);
+app.use("/api/v1/subscriptions", subscriptionRoutes);
 
 let http = require("http").Server(app);
 global.io = require("socket.io")(http, { path: "/socket.io" });

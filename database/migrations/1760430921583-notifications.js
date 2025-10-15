@@ -50,13 +50,13 @@ module.exports = {
         },
       },
 
-      repairReferralId: {
+      ReferralId: {
         type: Sequelize.INTEGER,
 
         allowNull: true,
 
         references: {
-          model: "RepairReferrals",
+          model: "Referrals",
           key: "id",
         },
       },
