@@ -2,75 +2,85 @@
 
 require("dotenv").config();
 const { port } = require("./config/app");
-const { database } = require("./config/database");
 require("./config/connection");
+
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+
 const userRoutes = require("./routes/UserRoutes");
 const vehicleRoutes = require("./routes/VehicleRoutes");
 const testDriveRequestRoutes = require("./routes/TestDriveRequestsRoutes");
 const contactRoutes = require("./routes/ContactRoutes");
 const reportsRoutes = require("./routes/ReportsRoutes");
 const dealerRoutes = require("./routes/DealerRoutes");
-const refferalRoutes = require("./routes/ReferralRoutes");
+const referralRoutes = require("./routes/ReferralRoutes");
 const repairRoutes = require("./routes/RepairRoutes");
 const insuranceRoutes = require("./routes/InsuranceRoutes");
 const advertisementRoutes = require("./routes/AdvertisementRoutes");
 const subscriptionRoutes = require("./routes/SubscriptionRoutes");
-/*
- |--------------------------------------------------------------------------
- | Node_framwork - A Node Framework For Website & apis
- |--------------------------------------------------------------------------
- |
- | This file allows us to Starts server & gave functionality from the
- | built-in Node web server. 
- |
- */
+const conversationRoutes = require("./routes/ConversationRoutes");
+const messageRoutes = require("./routes/MessageRoutes");
 
-const express = require("express");
-// const autoload = require('./bootstrap/autoload');
+// Notifications & Messaging routes
+const notificationsRoutes = require("./routes/NotificationRoutes");
 
-let app = express();
+const app = express();
 
 app.use("/api/stripe", require("./routes/StripeWebhook"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-// app.use('/', autoload);
-
-// Api Routes
+require("./cronjobs/clearOldNotifications");
+// API Routes
 app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/vehicle", vehicleRoutes);
 app.use("/api/v1/testdriverequest", testDriveRequestRoutes);
 app.use("/api/v1/contact", contactRoutes);
 app.use("/api/v1/report", reportsRoutes);
 app.use("/api/v1/dealer", dealerRoutes);
-app.use("/api/v1/referral", refferalRoutes);
+app.use("/api/v1/referral", referralRoutes);
 app.use("/api/v1/repair", repairRoutes);
 app.use("/api/v1/insurance", insuranceRoutes);
 app.use("/api/v1/advertisement", advertisementRoutes);
 app.use("/api/v1/subscriptions", subscriptionRoutes);
 
-let http = require("http").Server(app);
-global.io = require("socket.io")(http, { path: "/socket.io" });
-require("./routes/socket");
+// Notifications & Messaging Routes
+app.use("/api/v1/notifications", notificationsRoutes);
+app.use("/api/v1/conversation", conversationRoutes);
+app.use("/api/v1/message", messageRoutes);
+// HTTP Server & Socket.io Setup
+const server = http.createServer(app);
 
-http.listen(port, () => {
-  console.log("Server Running on port " + port);
+global.io = new Server(server, {
+  cors: { origin: "*", methods: ["GET", "POST"] },
 });
 
-app.on("error", onError);
-app.on("listening", onListening);
+// Handle user connections
+global.io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
 
-/**
- * Event listener for HTTP server "error" event.
- */
+  // Join user's personal room for notifications
+  socket.on("join_room", (userId) => {
+    socket.join(`user_${userId}`);
+    console.log(`User ${userId} joined room user_${userId}`);
+  });
 
-function onError(error) {
-  if (error.syscall !== "listen") {
-    throw error;
-  }
+  // Disconnect
+  socket.on("disconnect", () => {
+    console.log("User disconnected:", socket.id);
+  });
+});
 
-  let bind = typeof port === "string" ? "Pipe " + port : "Port " + port;
+// Start server
+server.listen(port, () => {
+  console.log("Socket is running on port " + port);
+});
 
-  // handle specific listen errors with friendly messages
+// Error handling (attach to server, not app)
+server.on("error", (error) => {
+  if (error.syscall !== "listen") throw error;
+  const bind = typeof port === "string" ? "Pipe " + port : "Port " + port;
+
   switch (error.code) {
     case "EACCES":
       console.error(bind + " requires elevated privileges");
@@ -83,14 +93,10 @@ function onError(error) {
     default:
       throw error;
   }
-}
+});
 
-/**
- * Event listener for HTTP server "listening" event.
- */
-
-function onListening() {
-  let addr = server.address();
-  let bind = typeof addr === "string" ? "pipe " + addr : "port " + addr.port;
-  debug("Listening on " + bind);
-}
+server.on("listening", () => {
+  const addr = server.address();
+  const bind = typeof addr === "string" ? "pipe " + addr : "port " + addr.port;
+  console.log("Server is Listening on " + bind);
+});

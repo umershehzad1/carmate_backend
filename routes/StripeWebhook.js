@@ -11,9 +11,9 @@ router.post(
   "/webhook",
   express.raw({ type: "application/json" }),
   async (req, res) => {
-    // delegate to a controller or keep inline (example reuse your previous logic)
     const sig = req.headers["stripe-signature"];
     let event;
+
     try {
       event = stripe.webhooks.constructEvent(
         req.body,
@@ -25,11 +25,36 @@ router.post(
       return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
-    // handle events (you can call a handler in your controller instead)
-    if (event.type === "checkout.session.completed") {
-      await subscriptionCtrl.handleCheckoutSessionCompleted(event.data.object);
-    } else if (event.type === "customer.subscription.deleted") {
-      await subscriptionCtrl.handleSubscriptionDeleted(event.data.object);
+    try {
+      switch (event.type) {
+        case "checkout.session.completed":
+          // Subscription created
+          await subscriptionCtrl.handleCheckoutSessionCompleted(
+            event.data.object
+          );
+          break;
+
+        case "invoice.payment_succeeded":
+          // Invoice successfully paid → extend subscription
+          await subscriptionCtrl.handleInvoicePaid(event.data.object);
+          break;
+
+        case "invoice.payment_failed":
+          // Payment failed → handle accordingly
+          await subscriptionCtrl.handleInvoiceFailed(event.data.object);
+          break;
+
+        case "customer.subscription.deleted":
+          // Subscription canceled
+          await subscriptionCtrl.handleSubscriptionDeleted(event.data.object);
+          break;
+
+        default:
+          console.log(`ℹ️ Ignored event type: ${event.type}`);
+      }
+    } catch (err) {
+      console.error("Webhook handling error:", err.message);
+      return res.status(500).send("Internal Error");
     }
 
     res.status(200).send("Received");

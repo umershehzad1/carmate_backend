@@ -157,7 +157,7 @@ o.handleCheckoutSessionCompleted = async (session) => {
         expiryDate,
       });
 
-      console.log(`🔁 Subscription updated for user ${userId} → ${plan}`);
+      console.log(`🔁 Subscription updated`);
     } else {
       // New subscription
       await Subscription.create({
@@ -165,6 +165,8 @@ o.handleCheckoutSessionCompleted = async (session) => {
         plan,
         price: `$${price}`,
         expiryDate,
+        stripeSubscriptionId: stripeSub.id,
+        stripeCustomerId: stripeSub.customer,
       });
 
       console.log(`✅ New subscription created for user ${userId} (${plan})`);
@@ -174,6 +176,78 @@ o.handleCheckoutSessionCompleted = async (session) => {
     await User.update({ subscriptionActive: true }, { where: { id: userId } });
   } catch (error) {
     return json.errorResponse(res, error.message, 400);
+  }
+};
+
+o.handleInvoicePaid = async (invoice) => {
+  try {
+    // Get the customer ID from the invoice
+    const stripeCustomerId = invoice.customer;
+    if (!stripeCustomerId) throw new Error("Invoice has no customer ID");
+
+    // Find the subscription in your database using customer ID
+    const existingSub = await Subscription.findOne({
+      where: { stripeCustomerId },
+    });
+
+    if (!existingSub) {
+      console.warn(
+        `⚠️ No subscription found in DB for customer ${stripeCustomerId}`
+      );
+      return;
+    }
+
+    const subscriptionId = existingSub.stripeSubscriptionId;
+
+    // Retrieve subscription details from Stripe
+    const stripeSub = await stripe.subscriptions.retrieve(subscriptionId);
+    const userId = stripeSub.metadata.userId || existingSub.userId;
+
+    // Always extend from current time
+    let expiryDate = new Date();
+    const interval = stripeSub.plan?.interval || "month";
+    const count = stripeSub.plan?.interval_count || 1;
+
+    if (interval === "month") {
+      expiryDate.setMonth(expiryDate.getMonth() + count);
+    } else if (interval === "year") {
+      expiryDate.setFullYear(expiryDate.getFullYear() + count);
+    } else {
+      expiryDate.setDate(expiryDate.getDate() + 30 * count);
+    }
+
+    // Update subscription expiry in DB
+    await existingSub.update({ expiryDate, stripeCustomerId });
+
+    console.log(
+      `🔁 Subscription renewed for user ${userId}, new expiry: ${expiryDate.toISOString()}`
+    );
+  } catch (err) {
+    console.error("❌ Error handling invoice.payment_succeeded:", err.message);
+  }
+};
+
+o.handleInvoiceFailed = async (invoice) => {
+  try {
+    // Get subscription ID from invoice
+    const customerId = invoice.customer;
+
+    if (!customerId) {
+      throw new Error("Invoice has no subscription ID");
+    }
+
+    // Log the failed payment
+    console.log(`⚠️ Subscription payment failed for user, subscription`);
+
+    // Optionally, log invoice info for debugging
+    console.log("Invoice details:", {
+      id: invoice.id,
+      amount_due: invoice.amount_due,
+      status: invoice.status,
+      created: new Date(invoice.created * 1000).toISOString(),
+    });
+  } catch (err) {
+    console.error("❌ Error handling invoice.payment_failed:", err.message);
   }
 };
 
@@ -195,18 +269,41 @@ o.handleSubscriptionDeleted = async (subscription) => {
 o.cancelSubscription = async function (req, res, next) {
   try {
     const user = req.decoded;
-    const subscription = await Subscription.findOne({ userId: user.id });
 
+    const subscription = await Subscription.findOne({
+      where: { userId: user.id },
+    });
     if (!subscription) {
       return json.errorResponse(res, "No subscription found", 404);
     }
+
+    if (subscription.stripeSubscriptionId) {
+      console.log(
+        "Cancelling subscription:",
+        subscription.stripeSubscriptionId
+      );
+
+      // Cancel immediately
+      const cancelled = await stripe.subscriptions.cancel(
+        subscription.stripeSubscriptionId
+      );
+
+      console.log("Stripe response:", cancelled.status);
+
+      if (cancelled.status !== "canceled") {
+        return json.errorResponse(res, "Stripe cancellation failed", 400);
+      }
+    }
+
     await subscription.destroy();
+
     return json.successResponse(
       res,
-      "Subscription cancelled Successfully",
+      "Subscription cancelled successfully",
       200
     );
   } catch (error) {
+    console.error("Stripe cancellation error:", error);
     return json.errorResponse(res, error.message, 400);
   }
 };

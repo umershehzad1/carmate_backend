@@ -18,7 +18,7 @@ module.exports = (sequelize, DataTypes) => {
         onDelete: "CASCADE",
       });
       Referral.hasMany(models.Notifications, {
-        foreignKey: "ReferralId",
+        foreignKey: "referralId",
         as: "notifications",
       });
     }

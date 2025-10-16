@@ -50,7 +50,7 @@ module.exports = {
         },
       },
 
-      ReferralId: {
+      referralId: {
         type: Sequelize.INTEGER,
 
         allowNull: true,

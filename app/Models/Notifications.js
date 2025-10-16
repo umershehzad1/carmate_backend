@@ -25,7 +25,7 @@ module.exports = (sequelize, DataTypes) => {
       });
 
       Notifications.belongsTo(models.Referral, {
-        foreignKey: "ReferralId",
+        foreignKey: "referralId",
         as: "Referral",
         onDelete: "CASCADE",
       });
@@ -53,7 +53,7 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: true,
         references: { model: "TestDriveRequests", key: "id" },
       },
-      ReferralId: {
+      referralId: {
         type: DataTypes.INTEGER,
         allowNull: true,
         references: { model: "Referrals", key: "id" },
