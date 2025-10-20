@@ -7,7 +7,7 @@ require("./config/connection");
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
-
+const cors = require("cors");
 const userRoutes = require("./routes/UserRoutes");
 const vehicleRoutes = require("./routes/VehicleRoutes");
 const testDriveRequestRoutes = require("./routes/TestDriveRequestsRoutes");
@@ -26,12 +26,22 @@ const messageRoutes = require("./routes/MessageRoutes");
 const notificationsRoutes = require("./routes/NotificationRoutes");
 
 const app = express();
+app.use(
+  cors({
+    origin: "http://localhost:3000", // your frontend origin
+    credentials: true, // allow cookies or auth headers
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-access-token"],
+  })
+);
 
 app.use("/api/stripe", require("./routes/StripeWebhook"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 require("./cronjobs/clearOldNotifications");
 // API Routes
+app.use("/public", express.static("public"));
+
 app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/vehicle", vehicleRoutes);
 app.use("/api/v1/testdriverequest", testDriveRequestRoutes);
@@ -62,7 +72,7 @@ global.io.on("connection", (socket) => {
   // Join user's personal room for notifications
   socket.on("join_room", (userId) => {
     socket.join(`user_${userId}`);
-    console.log(`User ${userId} joined room user_${userId}`);
+    console.log(`User ${userId} joined user_${userId}`);
   });
 
   // Disconnect

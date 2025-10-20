@@ -1,7 +1,7 @@
-'use strict'
+"use strict";
 
 module.exports = {
-    /*
+  /*
     |--------------------------------------------------------------------------
     | Mail Driver
     |--------------------------------------------------------------------------
@@ -15,9 +15,9 @@ module.exports = {
     |
     */
 
-    'driver' : process.env.MAIL_DRIVER || 'smtp',
+  driver: process.env.MAIL_DRIVER || "smtp",
 
-    /*
+  /*
     |--------------------------------------------------------------------------
     | SMTP Host Address
     |--------------------------------------------------------------------------
@@ -28,9 +28,9 @@ module.exports = {
     |
     */
 
-    'host' : process.env.MAIL_HOST || 'smtp.mailgun.org',
+  host: process.env.MAIL_HOST || "smtp.mailgun.org",
 
-    /*
+  /*
     |--------------------------------------------------------------------------
     | SMTP Host Port
     |--------------------------------------------------------------------------
@@ -41,9 +41,9 @@ module.exports = {
     |
     */
 
-    'port' : process.env.MAIL_PORT || 587,
+  port: process.env.MAIL_PORT || 587,
 
-    /*
+  /*
     |--------------------------------------------------------------------------
     | Global "From" Address
     |--------------------------------------------------------------------------
@@ -54,12 +54,12 @@ module.exports = {
     |
     */
 
-    'from' : {
-        'address' : 'hello@example.com',
-        'name' : 'Example',
-    },
+  from: {
+    address: "hello@example.com",
+    name: "Example",
+  },
 
-    /*
+  /*
     |--------------------------------------------------------------------------
     | E-Mail Encryption Protocol
     |--------------------------------------------------------------------------
@@ -70,9 +70,9 @@ module.exports = {
     |
     */
 
-    'encryption' : 'tls',
+  encryption: process.env.MAIL_ENCRYPTION || "tls",
 
-    /*
+  /*
     |--------------------------------------------------------------------------
     | SMTP Server Username
     |--------------------------------------------------------------------------
@@ -83,11 +83,11 @@ module.exports = {
     |
     */
 
-    'username' : process.env.MAIL_USERNAME || 'MAIL_USERNAME',
+  username: process.env.MAIL_USERNAME || "MAIL_USERNAME",
 
-    'password' : process.env.MAIL_PASSWORD || 'MAIL_PASSWORD',
+  password: process.env.MAIL_PASSWORD || "MAIL_PASSWORD",
 
-    /*
+  /*
     |--------------------------------------------------------------------------
     | Sendmail System Path
     |--------------------------------------------------------------------------
@@ -98,9 +98,9 @@ module.exports = {
     |
     */
 
-    'sendmail' : '/usr/sbin/sendmail -bs',
+  sendmail: "/usr/sbin/sendmail -bs",
 
-    /*
+  /*
     |--------------------------------------------------------------------------
     | Markdown Mail Settings
     |--------------------------------------------------------------------------
@@ -111,11 +111,9 @@ module.exports = {
     |
     */
 
-    'markdown' : {
-        'theme' : 'default',
+  markdown: {
+    theme: "default",
 
-        'paths' : 'views/vendor/mail',
-    },
-    
-
-}
+    paths: "views/vendor/mail",
+  },
+};

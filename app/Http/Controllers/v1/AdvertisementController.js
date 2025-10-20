@@ -8,6 +8,7 @@ const db = require("../../../Models/index");
 const { Op, where } = require("sequelize");
 const Advertisement = db.Advertisement;
 const Vehicle = db.Vehicle;
+const Dealer = db.Dealer;
 const User = db.User;
 // Sequential field validation function
 function validateRequiredFieldsSequentially(body, requiredFields) {
@@ -77,7 +78,7 @@ o.getAdDetails = async function (req, res, next) {
   }
 };
 
-o.getAllAds = async function (req, res, next) {
+o.getAllDealerAds = async function (req, res, next) {
   try {
     const ads = await Advertisement.findAll({
       where: { dealerId: req.decoded.id },
@@ -85,6 +86,53 @@ o.getAllAds = async function (req, res, next) {
     if (!ads || ads.length === 0) {
       return json.errorResponse(res, "No ads found", 404);
     }
+    return json.showAll(res, ads, 200);
+  } catch (error) {
+    return json.errorResponse(res, error.message, 400);
+  }
+};
+
+o.getAllAds = async function (req, res, next) {
+  try {
+    const { adType } = req.query;
+
+    const query = {
+      include: [
+        {
+          model: Vehicle,
+          as: "vehicle",
+        },
+        {
+          model: User,
+          as: "dealer", // from Advertisement.belongsTo(User)
+          attributes: ["id", "fullname", "email", "phone", "role", "image"],
+          include: [
+            {
+              model: Dealer,
+              as: "dealer", // from User.hasOne(Dealer)
+              attributes: [
+                "id",
+                "location",
+                "status",
+                "image",
+                "availableCarListing",
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    if (adType) {
+      query.where = { adType };
+    }
+
+    const ads = await Advertisement.findAll(query);
+
+    if (!ads || ads.length === 0) {
+      return json.errorResponse(res, "No ads found", 404);
+    }
+
     return json.showAll(res, ads, 200);
   } catch (error) {
     return json.errorResponse(res, error.message, 400);

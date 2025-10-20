@@ -97,6 +97,7 @@ o.updateDealer = async function (req, res, next) {
     }
 
     const userId = req.decoded.id;
+    console.log(userId);
 
     // Step 1: Find dealer by userId (the logged-in dealer)
     const dealer = await Dealer.findOne({

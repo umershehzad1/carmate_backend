@@ -19,8 +19,9 @@ router
   .post(authCtrl.authenticate, advertisementCtrl.createAd);
 
 router
-  .route("/getallads")
-  .get(authCtrl.authenticate, advertisementCtrl.getAllAds);
+  .route("/getalldealerads")
+  .get(authCtrl.authenticate, advertisementCtrl.getAllDealerAds);
+router.route("/getallads").get(advertisementCtrl.getAllAds);
 router.route("/:id").get(advertisementCtrl.getAdDetails);
 router
   .route("/:id")

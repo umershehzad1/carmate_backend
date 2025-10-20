@@ -33,21 +33,21 @@ router.route("/signup").post(userReq.signup, userReq.validate, userCtrl.signup);
 
 router.route("/login").post(userReq.signin, userReq.validate, userCtrl.login);
 
-router
-  .route("/forget-password")
-  .post(userReq.forgetPassword, userReq.validate, userCtrl.forgetPassword);
+router.route("/forget-password").post(userCtrl.forgetPassword);
 
-router
-  .route("/reset-password")
-  .post(userReq.resetPassword, userReq.validate, userCtrl.resetPassword);
+router.route("/reset-password").patch(userCtrl.resetPassword);
 
+router.route("/verifyotp").post(userCtrl.verifyResetPasswordCode);
 router
   .route("/allusers")
   .get(authCtrl.authenticate, authCtrl.isAdmin, userCtrl.getAllUsers);
 router
-  .route("/updatestatus/:id")
+  .route("/updaterole/:id")
   .patch(authCtrl.authenticate, authCtrl.isAdmin, userCtrl.updateRole);
-
+router
+  .route("/updatepassword")
+  .patch(authCtrl.authenticate, userCtrl.updatePassword);
+router.route("/googlesignup").post(userCtrl.googleSignup);
 // Upload Routes
 router
   .route("/upload")

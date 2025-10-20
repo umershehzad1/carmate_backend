@@ -69,7 +69,7 @@ module.exports = (sequelize, DataTypes) => {
   User.init(
     {
       email: { type: DataTypes.STRING, unique: true, allowNull: false },
-      password: { type: DataTypes.STRING, allowNull: false },
+      password: { type: DataTypes.STRING },
       fullname: DataTypes.STRING,
       username: DataTypes.STRING,
       phone: DataTypes.STRING,
@@ -78,6 +78,7 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.ENUM("user", "admin", "repair", "insurance", "dealer"),
         defaultValue: "user",
       },
+      resetPasswordCode: DataTypes.STRING,
     },
     {
       sequelize,

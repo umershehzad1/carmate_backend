@@ -20,6 +20,7 @@ const { JWT_EXPIRES_IN } = require("../../../../config/constants");
 
 const json = require("../../../Traits/ApiResponser");
 const email = require("../../../Traits/SendEmail");
+const { username } = require("../../../../config/mail");
 
 /*
 |--------------------------------------------------------------------------
@@ -55,6 +56,14 @@ o.signup = async (req, res, next) => {
       return json.errorResponse(res, "User Already Exist!", 409);
     }
 
+    const usernameExist = await User.findOne({
+      where: { username: req.body.username },
+    });
+
+    if (usernameExist) {
+      return json.errorResponse(res, "Username Already Exist!", 409);
+    }
+
     let password = bcrypt.hashSync(req.body.password, 5);
 
     let newUser = new User({
@@ -79,9 +88,33 @@ o.signup = async (req, res, next) => {
   }
 };
 
+o.googleSignup = async function (req, res, next) {
+  try {
+    let user = await User.findOne({ where: { email: req.body.email } });
+
+    if (!user) {
+      // Create new user if doesn't exist
+      user = new User({
+        email: req.body.email,
+        fullname: req.body.fullname,
+      });
+      user = await user.save();
+    }
+
+    // Generate token for both new and existing users
+    const token = createToken(user);
+
+    return json.showOne(res, { user: user, token }, 200);
+  } catch (error) {
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
+
 o.login = async (req, res, next) => {
   try {
-    const user = await User.findOne({ where: { email: req.body.email } });
+    const user = await User.findOne({
+      where: { email: req.body.email },
+    });
 
     if (!user) {
       return json.errorResponse(res, "User Not found", 404);
@@ -100,7 +133,7 @@ o.login = async (req, res, next) => {
 
     const token = createToken(user);
 
-    json.showOne(res, { newUserInfo, token }, 200);
+    json.showOne(res, { user: newUserInfo, token }, 200);
   } catch (err) {
     return json.errorResponse(res, err);
   }
@@ -108,9 +141,16 @@ o.login = async (req, res, next) => {
 
 o.me = async (req, res, next) => {
   try {
-    const user = await User.findOne({ id: req.decoded.id });
+    const user = await User.findOne({
+      where: { id: req.decoded.id },
+      attributes: { exclude: ["password"] },
+    });
 
-    json.showOne(res, user);
+    if (!user) {
+      return json.notFound(res, "User not found");
+    }
+
+    return json.showOne(res, user);
   } catch (err) {
     return json.errorResponse(res, err);
   }
@@ -129,7 +169,7 @@ o.edit = async (req, res, next) => {
     if (req.file) {
       const extension = req.body.extension || "jpg";
       const filename = Date.now() + "." + extension;
-      const destination = path.join(__dirname, "../../../public/uploads/");
+      const destination = path.join(__dirname, "../../../../public/uploads/");
 
       // Ensure directory exists
       if (!fs.existsSync(destination)) {
@@ -173,8 +213,7 @@ o.forgetPassword = async (req, res, next) => {
 
     user.resetPasswordCode = Math.floor(
       100000 + Math.random() * 900000
-    ).toString(); // 6-digit OTP
-    user.resetPasswordExpires = tomorrow;
+    ).toString();
 
     await user.save();
 
@@ -188,58 +227,66 @@ o.forgetPassword = async (req, res, next) => {
 
     email.send(user.email, "Forget Password?", html);
 
-    json.showOne(res, { success: true });
+    json.showOne(res, "Otp Sent to your email.", 200);
   } catch (err) {
     console.error(err);
     return json.errorResponse(res, err);
   }
 };
 
-o.resetPasswordPage = async function (req, res, next) {
+o.updatePassword = async function (req, res, next) {
   try {
-    let code = false;
-    let expiry = false;
-    let success = false;
+    const { password } = req.body;
 
-    if (req.query.code) {
-      const user = await User.findOne({ resetPasswordCode: req.query.code });
-      code = user ? true : false;
-      expiry = user.resetPasswordExpires <= new Date() ? true : false;
-    }
+    const user = await User.findByPk(req.decoded.id);
+    if (!user) return json.errorResponse(res, "User not found");
 
-    res.render("reset-password", {
-      code: code,
-      expiry: expiry,
-      success: success,
-    });
-  } catch (err) {
-    return json.errorResponse(res, err);
+    user.password = bcrypt.hashSync(password, 5);
+    await user.save();
+
+    json.successResponse(res, "Password Updated Successfully", 200);
+  } catch (error) {
+    return json.errorResponse(res, error.message || error, 400);
   }
 };
-
-o.resetPasswordPageSubmission = async function (req, res, next) {
+o.verifyResetPasswordCode = async function (req, res, next) {
   try {
-    let code = false;
-    let expiry = false;
-    let success = false;
+    const { email, code } = req.body;
 
-    if (req.query.code) {
-      let user = await User.findOne({ resetPasswordCode: req.query.code });
-      code = user ? true : false;
-      expiry = user.resetPasswordExpires <= new Date() ? true : false;
-      if (code && !expiry) {
-        user.resetPasswordExpires = new Date();
-        user.password = bcrypt.hashSync(req.body.password, 5);
-        await user.save();
-        success = true;
-      }
+    // Validate required fields
+    if (!email || !code) {
+      return json.errorResponse(res, "Email and code are required", 400);
     }
 
-    res.render("reset-password", {
-      code: code,
-      expiry: expiry,
-      success: success,
+    // Find user by email and reset password code
+    const user = await User.findOne({
+      where: {
+        email: email,
+        resetPasswordCode: code,
+      },
     });
+
+    if (!user) {
+      return json.errorResponse(res, "Invalid code!", 404);
+    }
+
+    // Check if code has expired
+    const isExpired = user.resetPasswordExpires <= new Date();
+    if (isExpired) {
+      return json.errorResponse(res, "The code has been expired!", 410);
+    }
+
+    user.resetPasswordCode = null;
+    await user.save();
+    // Code is valid
+    json.showOne(
+      res,
+      {
+        success: true,
+        message: "Reset password code verified successfully.",
+      },
+      200
+    );
   } catch (err) {
     return json.errorResponse(res, err);
   }
@@ -247,41 +294,31 @@ o.resetPasswordPageSubmission = async function (req, res, next) {
 
 o.resetPassword = async function (req, res, next) {
   try {
-    let code = false;
-    let expiry = false;
     let success = false;
-    let msg = "Unknown error occurred.";
-    let statusCode = 500;
 
     let user = await User.findOne({
-      email: req.body.email,
-      resetPasswordCode: req.body.code,
+      where: {
+        email: req.body.email,
+      },
     });
-    code = user ? true : false;
-    expiry = user?.resetPasswordExpires <= new Date() ? true : false;
-    if (code && !expiry) {
-      user.resetPasswordExpires = new Date();
+    console.log(user);
+
+    // Fix: Check if user exists (not email)
+    if (user) {
       user.password = bcrypt.hashSync(req.body.password, 5);
       await user.save();
       success = true;
     }
 
-    if (success) {
-      msg = "Your password has been changed successfully.";
-      statusCode = 200;
-    } else if (!code) {
-      msg = "Invalid code!";
-      statusCode = 404;
-    } else if (expiry) {
-      ((msg = "The code has been expired!"), (statusCode = 410));
-    }
-
     json.showOne(
       res,
       {
-        success: msg,
+        success: success,
+        message: success
+          ? "Password reset successfully."
+          : "User not found with this email.",
       },
-      statusCode
+      success ? 200 : 404
     );
   } catch (err) {
     return json.errorResponse(res, err);
@@ -301,6 +338,7 @@ o.updateRole = async function (req, res, next) {
   try {
     const { id } = req.params;
     const { role } = req.body;
+    console.log(req.body);
 
     // Step 1: Find user
     const user = await User.findByPk(id);
