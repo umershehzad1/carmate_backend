@@ -39,19 +39,23 @@ module.exports = (sequelize, DataTypes) => {
           competitorInsights: 0,
         },
       },
-
-      reviews: {
-        type: DataTypes.JSON,
-        allowNull: true,
-        defaultValue: {
-          totalReview: 0,
-          userReviews: [],
-        },
+      slug: {
+        type: DataTypes.STRING,
+        unique: true,
       },
+
       availableCarListing: {
         type: DataTypes.INTEGER,
         allowNull: true,
         defaultValue: 0,
+      },
+      openingTime: {
+        type: DataTypes.TIME,
+        allowNull: true,
+      },
+      closingTime: {
+        type: DataTypes.TIME,
+        allowNull: true,
       },
     },
     {

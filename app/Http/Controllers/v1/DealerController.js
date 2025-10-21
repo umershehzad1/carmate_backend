@@ -66,8 +66,9 @@ o.getAllDealers = async function (req, res, next) {
 
 o.getDealerDetails = async function (req, res, next) {
   try {
-    const { id } = req.params;
-    const dealer = await Dealer.findByPk(id, {
+    const { slug } = req.params;
+    const dealer = await Dealer.findOne({
+      where: { slug },
       include: [
         {
           model: User,
@@ -76,6 +77,7 @@ o.getDealerDetails = async function (req, res, next) {
         },
       ],
     });
+
     if (!dealer) {
       return json.errorResponse(res, "Dealer not found", 404);
     }

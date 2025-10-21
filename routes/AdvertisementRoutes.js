@@ -18,15 +18,14 @@ router
   .route("/createad")
   .post(authCtrl.authenticate, advertisementCtrl.createAd);
 
-router
-  .route("/getalldealerads")
-  .get(authCtrl.authenticate, advertisementCtrl.getAllDealerAds);
+router.route("/getalldealerads/:id").get(advertisementCtrl.getAllDealerAds);
 router.route("/getallads").get(advertisementCtrl.getAllAds);
 router.route("/:id").get(advertisementCtrl.getAdDetails);
 router
   .route("/:id")
   .patch(authCtrl.authenticate, advertisementCtrl.updateAdStatus);
 router.route("/:id").delete(authCtrl.authenticate, advertisementCtrl.deleteAd);
+router.route("/getsimilarads/:slug").get(advertisementCtrl.getSimilarAds);
 router
   .route("/extendadcompaign/:id")
   .patch(authCtrl.authenticate, advertisementCtrl.extendAdCompaign);

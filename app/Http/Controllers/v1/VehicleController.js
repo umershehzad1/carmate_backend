@@ -7,6 +7,8 @@ const json = require("../../../Traits/ApiResponser"); // Your custom response he
 const db = require("../../../Models/index");
 const { Op, where } = require("sequelize");
 const Vehicle = db.Vehicle;
+const Dealer = db.Dealer;
+const User = db.User;
 // Sequential field validation function
 function validateRequiredFieldsSequentially(body, requiredFields) {
   for (const field of requiredFields) {
@@ -31,6 +33,7 @@ o.addVehicle = async function (req, res, next) {
       assemblyIn,
       bodyType,
       color,
+      doors,
       engineCapacity,
       interiorDetails,
       exteriorDetails,
@@ -54,6 +57,7 @@ o.addVehicle = async function (req, res, next) {
       "assemblyIn",
       "bodyType",
       "color",
+      "doors",
       "engineCapacity",
       "interiorDetails",
       "exteriorDetails",
@@ -112,6 +116,7 @@ o.addVehicle = async function (req, res, next) {
       assemblyIn,
       bodyType,
       color,
+      doors,
       engineCapacity,
       interiorDetails,
       exteriorDetails,
@@ -131,11 +136,32 @@ o.getVehicleDetails = async function (req, res, next) {
   try {
     const { slug } = req.params;
     const vehicle = await Vehicle.findOne({
-      where: { slug: slug },
+      where: { slug },
+      include: [
+        {
+          model: User,
+          as: "user", // must match Vehicle.belongsTo alias
+          attributes: ["fullname", "email", "phone", "image"],
+          include: [
+            {
+              model: Dealer,
+              as: "dealer", // matches User.hasOne alias
+              attributes: [
+                "id",
+                "location",
+                "status",
+                "image",
+                "closingTime",
+                "openingTime",
+              ],
+            },
+          ],
+        },
+      ],
     });
 
     if (!vehicle) {
-      return json.errorResponse(res, "Vehicle Not Fount", 404);
+      return json.errorResponse(res, "Vehicle Not Found", 404);
     }
     return json.showOne(res, vehicle, 200);
   } catch (error) {

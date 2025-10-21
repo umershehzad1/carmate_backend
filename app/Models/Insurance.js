@@ -34,14 +34,11 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: "nonverified",
       },
       image: DataTypes.STRING,
-      reviews: {
-        type: DataTypes.JSON,
-        allowNull: true,
-        defaultValue: {
-          totalReview: 0,
-          userReviews: [],
-        },
+      slug: {
+        type: DataTypes.STRING,
+        unique: true,
       },
+
       analytics: {
         type: DataTypes.JSONB,
         allowNull: true,

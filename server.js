@@ -21,6 +21,7 @@ const advertisementRoutes = require("./routes/AdvertisementRoutes");
 const subscriptionRoutes = require("./routes/SubscriptionRoutes");
 const conversationRoutes = require("./routes/ConversationRoutes");
 const messageRoutes = require("./routes/MessageRoutes");
+const reviewRoutes = require("./routes/ReviewRoutes");
 
 // Notifications & Messaging routes
 const notificationsRoutes = require("./routes/NotificationRoutes");
@@ -53,6 +54,7 @@ app.use("/api/v1/repair", repairRoutes);
 app.use("/api/v1/insurance", insuranceRoutes);
 app.use("/api/v1/advertisement", advertisementRoutes);
 app.use("/api/v1/subscriptions", subscriptionRoutes);
+app.use("/api/v1/review", reviewRoutes);
 
 // Notifications & Messaging Routes
 app.use("/api/v1/notifications", notificationsRoutes);

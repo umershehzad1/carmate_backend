@@ -15,7 +15,7 @@ const upload = multer({
 const router = express.Router();
 
 router.route("/getalldealers").get(dealerCtrl.getAllDealers);
-router.route("/:id").get(dealerCtrl.getDealerDetails);
+router.route("/:slug").get(dealerCtrl.getDealerDetails);
 router.route("/").patch(authCtrl.authenticate, dealerCtrl.updateDealer);
 router.route("/").delete(authCtrl.authenticate, dealerCtrl.deleteDealer);
 
