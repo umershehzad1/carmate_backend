@@ -144,6 +144,26 @@ o.me = async (req, res, next) => {
     const user = await User.findOne({
       where: { id: req.decoded.id },
       attributes: { exclude: ["password"] },
+      include: [
+        {
+          model: Dealer,
+          as: "dealer",
+          attributes: { exclude: ["userId"] }, // optional: exclude foreign key
+        },
+        {
+          model: Repair,
+          as: "repair",
+        },
+        {
+          model: Insurance,
+          as: "insurance",
+        },
+        // {
+        //   model: Subscription,
+        //   as: "subscription",
+        // },
+        // Add other associations as needed
+      ],
     });
 
     if (!user) {
@@ -360,6 +380,10 @@ o.updateRole = async function (req, res, next) {
           userId: user.id,
           location: user.city || null, // optional: use user's city if available
           status: "nonverified",
+          slug: user.fullname
+            .toLowerCase()
+            .replace(/ /g, "-")
+            .replace(/[^\w-]+/g, ""),
         });
       }
     } else if (role === "repair") {
@@ -371,6 +395,10 @@ o.updateRole = async function (req, res, next) {
           userId: user.id,
           location: user.city || null,
           status: "nonverified",
+          slug: user.fullname
+            .toLowerCase()
+            .replace(/ /g, "-")
+            .replace(/[^\w-]+/g, ""),
         });
       }
     } else if (role === "insurance") {
@@ -382,6 +410,10 @@ o.updateRole = async function (req, res, next) {
           userId: user.id,
           location: user.city || null,
           status: "nonverified",
+          slug: user.fullname
+            .toLowerCase()
+            .replace(/ /g, "-")
+            .replace(/[^\w-]+/g, ""),
         });
       }
     }

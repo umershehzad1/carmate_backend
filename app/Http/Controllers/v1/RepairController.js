@@ -66,8 +66,9 @@ o.getAllRepairs = async function (req, res, next) {
 
 o.getRepairDetails = async function (req, res, next) {
   try {
-    const { id } = req.params;
-    const repair = await Repair.findByPk(id, {
+    const { slug } = req.params;
+    const repair = await Repair.findOne({
+      where: { slug },
       include: [
         { model: User, as: "user", attributes: { exclude: ["password"] } },
       ],

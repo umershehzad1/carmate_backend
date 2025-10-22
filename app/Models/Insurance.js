@@ -25,9 +25,9 @@ module.exports = (sequelize, DataTypes) => {
       },
 
       location: DataTypes.STRING,
-      experience: DataTypes.STRING,
-      keyBenifits: DataTypes.STRING,
-      speciality: DataTypes.STRING,
+      experience: DataTypes.ARRAY(DataTypes.STRING),
+      keyBenifits: DataTypes.ARRAY(DataTypes.STRING),
+      speciality: DataTypes.ARRAY(DataTypes.STRING),
       aboutUs: DataTypes.STRING,
       status: {
         type: DataTypes.ENUM("nonverified", "verified"),
@@ -38,7 +38,14 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.STRING,
         unique: true,
       },
-
+      openingTime: {
+        type: DataTypes.TIME,
+        allowNull: true,
+      },
+      closingTime: {
+        type: DataTypes.TIME,
+        allowNull: true,
+      },
       analytics: {
         type: DataTypes.JSONB,
         allowNull: true,

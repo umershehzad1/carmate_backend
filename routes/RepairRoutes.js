@@ -15,7 +15,7 @@ const upload = multer({
 const router = express.Router();
 
 router.route("/getallrepairs").get(repairCtrl.getAllRepairs);
-router.route("/:id").get(repairCtrl.getRepairDetails);
+router.route("/:slug").get(repairCtrl.getRepairDetails);
 router.route("/").patch(authCtrl.authenticate, repairCtrl.updateRepairProfile);
 router.route("/").delete(authCtrl.authenticate, repairCtrl.deleteRepairProfile);
 

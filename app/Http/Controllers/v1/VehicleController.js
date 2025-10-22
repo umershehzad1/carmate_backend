@@ -25,53 +25,149 @@ o.addVehicle = async function (req, res, next) {
   try {
     const {
       name,
+      price,
+      city,
+      province,
+      make,
       model,
+      modelCategory,
       mileage,
+      doors,
       transmission,
       fuelType,
       registerIn,
       assemblyIn,
       bodyType,
       color,
-      doors,
       engineCapacity,
       interiorDetails,
       exteriorDetails,
       safetyFeatures,
       specifications,
       status,
+      description,
+      tags,
+      condition,
+      exteriorColor,
+      year,
+      drive,
+      location,
     } = req.body;
 
     const { role, id } = req.decoded;
+
+    // Authorization check
     if (role !== "dealer") {
       return json.errorResponse(res, "Unauthorized access", 401);
     }
 
+    // Define all required fields based on model
     const requiredFields = [
       "name",
+      "price",
+      "city",
+      "province",
+      "make",
       "model",
+      "modelCategory",
       "mileage",
+      "doors",
       "transmission",
       "fuelType",
       "registerIn",
       "assemblyIn",
       "bodyType",
       "color",
-      "doors",
       "engineCapacity",
       "interiorDetails",
       "exteriorDetails",
       "safetyFeatures",
       "specifications",
+      "description",
+      "condition",
+      "exteriorColor",
+      "year",
+      "drive",
+      "location",
     ];
 
-    // Validate fields sequentially
-    validateRequiredFieldsSequentially(req.body, requiredFields);
+    // Validate all required fields sequentially
+    const validationError = validateRequiredFieldsSequentially(
+      req.body,
+      requiredFields
+    );
+    if (validationError) {
+      return json.errorResponse(res, validationError, 400);
+    }
+
+    // Validate doors is an integer
+    if (isNaN(parseInt(doors))) {
+      return json.errorResponse(
+        res,
+        "Field 'doors' must be a valid number",
+        400
+      );
+    }
+
+    // Validate condition enum
+    const validConditions = ["used", "new", "certified"];
+    if (!validConditions.includes(condition)) {
+      return json.errorResponse(
+        res,
+        `Field 'condition' must be one of: ${validConditions.join(", ")}`,
+        400
+      );
+    }
+
+    // Validate status enum
+    const validStatuses = ["live", "draft", "sold"];
+    if (status && !validStatuses.includes(status)) {
+      return json.errorResponse(
+        res,
+        `Field 'status' must be one of: ${validStatuses.join(", ")}`,
+        400
+      );
+    }
+
+    // Validate tags is an array
+    if (tags && !Array.isArray(tags)) {
+      return json.errorResponse(res, "Field 'tags' must be an array", 400);
+    }
+
+    // Validate JSON fields
+    const jsonFields = [
+      "interiorDetails",
+      "exteriorDetails",
+      "safetyFeatures",
+      "specifications",
+    ];
+    for (const field of jsonFields) {
+      if (req.body[field]) {
+        try {
+          if (typeof req.body[field] === "string") {
+            JSON.parse(req.body[field]);
+          } else if (!isValidObject(req.body[field])) {
+            return json.errorResponse(
+              res,
+              `Field '${field}' must be a valid JSON object`,
+              400
+            );
+          }
+        } catch (e) {
+          return json.errorResponse(
+            res,
+            `Field '${field}' must be valid JSON`,
+            400
+          );
+        }
+      }
+    }
 
     // Handle uploaded files from req.files
     const finalImages = [];
     if (req.files && req.files.length > 0) {
       const destination = path.join(__dirname, "../../../public/uploads/");
+
       if (!fs.existsSync(destination)) {
         fs.mkdirSync(destination, { recursive: true });
       }
@@ -87,6 +183,7 @@ o.addVehicle = async function (req, res, next) {
       });
     }
 
+    // Validate images
     if (finalImages.length === 0) {
       return json.errorResponse(
         res,
@@ -97,40 +194,88 @@ o.addVehicle = async function (req, res, next) {
 
     // Generate slug from name
     let slug = slugify(
-      `${name}-${model}-${color}-${mileage}-${transmission}-${fuelType}-${registerIn}-${bodyType}-${engineCapacity}-${assemblyIn}`,
+      `${name}-${model}-${color}-${mileage}-${transmission}-${fuelType}-${registerIn}-${bodyType}-${engineCapacity}-${assemblyIn}-${Date.now()}`,
       { lower: true }
     );
 
-    // Create vehicle record
-    console.log("dealerId", id);
+    // Check if slug already exists
+    const existingVehicle = await Vehicle.findOne({ where: { slug } });
+    if (existingVehicle) {
+      slug = slug + "-" + Date.now();
+    }
 
+    // Create vehicle record with all fields
     const vehicle = await Vehicle.create({
       dealerId: id,
       name,
       slug,
+      images: finalImages,
+      price,
+      city,
+      province,
+      make,
       model,
+      modelCategory,
       mileage,
+      doors: parseInt(doors),
       transmission,
       fuelType,
       registerIn,
       assemblyIn,
       bodyType,
       color,
-      doors,
       engineCapacity,
-      interiorDetails,
-      exteriorDetails,
-      safetyFeatures,
-      specifications,
-      images: finalImages,
-      status,
+      interiorDetails:
+        typeof interiorDetails === "string"
+          ? JSON.parse(interiorDetails)
+          : interiorDetails,
+      exteriorDetails:
+        typeof exteriorDetails === "string"
+          ? JSON.parse(exteriorDetails)
+          : exteriorDetails,
+      safetyFeatures:
+        typeof safetyFeatures === "string"
+          ? JSON.parse(safetyFeatures)
+          : safetyFeatures,
+      specifications:
+        typeof specifications === "string"
+          ? JSON.parse(specifications)
+          : specifications,
+      status: status || "live",
+      description,
+      tags: Array.isArray(tags) ? tags : tags ? [tags] : [],
+      condition,
+      exteriorColor,
+      year,
+      drive,
+      location,
     });
 
     return json.showOne(res, vehicle, 200);
   } catch (error) {
+    console.error("addVehicle Error:", error);
     return json.errorResponse(res, error.message || error, 400);
   }
 };
+
+// Helper function to validate required fields
+function validateRequiredFieldsSequentially(data, requiredFields) {
+  for (const field of requiredFields) {
+    if (
+      !data[field] ||
+      (typeof data[field] === "string" && data[field].trim() === "") ||
+      (Array.isArray(data[field]) && data[field].length === 0)
+    ) {
+      return `Field '${field}' is required and cannot be empty`;
+    }
+  }
+  return null;
+}
+
+// Helper function to check if value is valid object
+function isValidObject(obj) {
+  return obj !== null && typeof obj === "object" && !Array.isArray(obj);
+}
 
 o.getVehicleDetails = async function (req, res, next) {
   try {

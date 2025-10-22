@@ -59,6 +59,24 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: "live",
       },
+      description: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      tags: {
+        type: DataTypes.ARRAY(DataTypes.STRING),
+        allowNull: true,
+        defaultValue: [],
+      },
+      condition: {
+        type: DataTypes.ENUM("used", "new", "certified"),
+        allowNull: false,
+        defaultValue: "used",
+      },
+      exteriorColor: DataTypes.STRING,
+      year: DataTypes.STRING,
+      drive: DataTypes.STRING,
+      location: DataTypes.STRING,
     },
     {
       sequelize,

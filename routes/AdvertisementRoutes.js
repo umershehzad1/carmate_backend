@@ -20,6 +20,7 @@ router
 
 router.route("/getalldealerads/:id").get(advertisementCtrl.getAllDealerAds);
 router.route("/getallads").get(advertisementCtrl.getAllAds);
+router.route("/getallfeaturesads").get(advertisementCtrl.getAllFeaturesAds);
 router.route("/:id").get(advertisementCtrl.getAdDetails);
 router
   .route("/:id")

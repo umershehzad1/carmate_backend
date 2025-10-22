@@ -25,9 +25,9 @@ module.exports = (sequelize, DataTypes) => {
       },
 
       location: DataTypes.STRING,
-      experience: DataTypes.STRING,
-      specialty: DataTypes.STRING,
-      servicesOffer: DataTypes.STRING,
+      experience: DataTypes.ARRAY(DataTypes.STRING),
+      specialty: DataTypes.ARRAY(DataTypes.STRING),
+      servicesOffer: DataTypes.ARRAY(DataTypes.STRING),
       AboutUs: DataTypes.STRING,
       gallery: {
         type: DataTypes.ARRAY(DataTypes.STRING),
@@ -43,7 +43,14 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.STRING,
         unique: true,
       },
-
+      openingTime: {
+        type: DataTypes.TIME,
+        allowNull: true,
+      },
+      closingTime: {
+        type: DataTypes.TIME,
+        allowNull: true,
+      },
       CustomerInsigts: {
         type: DataTypes.JSONB,
         allowNull: true,

@@ -248,11 +248,11 @@ o.getAllAds = async function (req, res, next) {
     }
 
     if (minYear && maxYear) {
-      vehicleWhere.year = { [Op.between]: [minYear, maxYear] };
+      vehicleWhere.model = { [Op.between]: [minYear, maxYear] };
     } else if (minYear) {
-      vehicleWhere.year = { [Op.gte]: minYear };
+      vehicleWhere.model = { [Op.gte]: minYear };
     } else if (maxYear) {
-      vehicleWhere.year = { [Op.lte]: maxYear };
+      vehicleWhere.model = { [Op.lte]: maxYear };
     }
 
     if (minMileage && maxMileage) {
@@ -351,6 +351,264 @@ o.getAllAds = async function (req, res, next) {
         attributes: [
           [col(attr), attr],
           [fn("COUNT", col(attr)), "count"],
+        ],
+        group: [col(attr)],
+        where: {
+          [attr]: { [Op.ne]: null }, // exclude nulls
+        },
+        raw: true,
+      });
+      aggregateData[attr] = rows;
+    }
+
+    // -----------------------------
+    // FINAL RESPONSE
+    // -----------------------------
+    return res.status(200).json({
+      success: true,
+      message:
+        ads.length > 0
+          ? "Ads fetched successfully"
+          : "No ads found matching your criteria",
+      pagination: {
+        totalFiltered: filteredCount,
+        totalAllVehicles: totalVehicles,
+        page: parseInt(page),
+        perPage: parseInt(limit),
+        totalPages: Math.ceil(filteredCount / limit),
+        rangeText:
+          filteredCount > 0
+            ? `${offset + 1}-${Math.min(offset + parseInt(limit), filteredCount)} of ${filteredCount} vehicles`
+            : "0 vehicles",
+      },
+      filterStats: aggregateData,
+      data: ads || [],
+    });
+  } catch (error) {
+    console.error(error);
+    return json.errorResponse(res, error.message, 400);
+  }
+};
+
+o.getAllFeaturesAds = async function (req, res, next) {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      sort = "recent",
+      keyword,
+      city,
+      province,
+      make,
+      minPrice,
+      maxPrice,
+      minYear,
+      maxYear,
+      minMileage,
+      maxMileage,
+      registerIn,
+      transmission,
+      color,
+      fuelType,
+      assemblyIn,
+      bodyType,
+      modelCategory,
+      dealerStatus,
+    } = req.query;
+
+    const offset = (page - 1) * limit;
+
+    // -----------------------------
+    // VEHICLE FILTERS
+    // -----------------------------
+    const vehicleWhere = {};
+
+    // Helper function to parse array filters
+    const parseArrayFilter = (value) => {
+      if (!value) return null;
+      if (Array.isArray(value)) return value;
+      if (typeof value === "string" && value.includes(",")) {
+        return value.split(",").map((v) => v.trim());
+      }
+      return [value];
+    };
+
+    // Apply filters with array support
+    if (keyword) vehicleWhere.name = { [Op.iLike]: `%${keyword}%` };
+
+    // Handle array filters - use Op.in for multiple values
+    const cityArray = parseArrayFilter(city);
+    if (cityArray && cityArray.length > 0) {
+      vehicleWhere.city = { [Op.in]: cityArray };
+    }
+
+    const provinceArray = parseArrayFilter(province);
+    if (provinceArray && provinceArray.length > 0) {
+      vehicleWhere.province = { [Op.in]: provinceArray };
+    }
+
+    const makeArray = parseArrayFilter(make);
+    if (makeArray && makeArray.length > 0) {
+      vehicleWhere.make = { [Op.in]: makeArray };
+    }
+
+    const registerInArray = parseArrayFilter(registerIn);
+    if (registerInArray && registerInArray.length > 0) {
+      vehicleWhere.registerIn = { [Op.in]: registerInArray };
+    }
+
+    const transmissionArray = parseArrayFilter(transmission);
+    if (transmissionArray && transmissionArray.length > 0) {
+      vehicleWhere.transmission = { [Op.in]: transmissionArray };
+    }
+
+    const colorArray = parseArrayFilter(color);
+    if (colorArray && colorArray.length > 0) {
+      vehicleWhere.color = { [Op.in]: colorArray };
+    }
+
+    const fuelTypeArray = parseArrayFilter(fuelType);
+    if (fuelTypeArray && fuelTypeArray.length > 0) {
+      vehicleWhere.fuelType = { [Op.in]: fuelTypeArray };
+    }
+
+    const assemblyInArray = parseArrayFilter(assemblyIn);
+    if (assemblyInArray && assemblyInArray.length > 0) {
+      vehicleWhere.assemblyIn = { [Op.in]: assemblyInArray };
+    }
+
+    const bodyTypeArray = parseArrayFilter(bodyType);
+    if (bodyTypeArray && bodyTypeArray.length > 0) {
+      vehicleWhere.bodyType = { [Op.in]: bodyTypeArray };
+    }
+
+    const modelCategoryArray = parseArrayFilter(modelCategory);
+    if (modelCategoryArray && modelCategoryArray.length > 0) {
+      vehicleWhere.modelCategory = { [Op.in]: modelCategoryArray };
+    }
+
+    // Range filters
+    if (minPrice && maxPrice) {
+      vehicleWhere.price = { [Op.between]: [minPrice, maxPrice] };
+    } else if (minPrice) {
+      vehicleWhere.price = { [Op.gte]: minPrice };
+    } else if (maxPrice) {
+      vehicleWhere.price = { [Op.lte]: maxPrice };
+    }
+
+    if (minYear && maxYear) {
+      vehicleWhere.model = { [Op.between]: [minYear, maxYear] };
+    } else if (minYear) {
+      vehicleWhere.model = { [Op.gte]: minYear };
+    } else if (maxYear) {
+      vehicleWhere.model = { [Op.lte]: maxYear };
+    }
+
+    if (minMileage && maxMileage) {
+      vehicleWhere.mileage = { [Op.between]: [minMileage, maxMileage] };
+    } else if (minMileage) {
+      vehicleWhere.mileage = { [Op.gte]: minMileage };
+    } else if (maxMileage) {
+      vehicleWhere.mileage = { [Op.lte]: maxMileage };
+    }
+
+    // -----------------------------
+    // DEALER FILTER
+    // -----------------------------
+    const dealerWhere = {};
+    const dealerStatusArray = parseArrayFilter(dealerStatus);
+    if (dealerStatusArray && dealerStatusArray.length > 0) {
+      dealerWhere.status = { [Op.in]: dealerStatusArray };
+    }
+
+    // -----------------------------
+    // SORT ORDER
+    // -----------------------------
+    const order =
+      sort === "oldest" ? [["createdAt", "ASC"]] : [["createdAt", "DESC"]];
+
+    // -----------------------------
+    // MAIN QUERY
+    // -----------------------------
+    const query = {
+      where: { adType: "featured" },
+      include: [
+        {
+          model: Vehicle,
+          as: "vehicle",
+          where:
+            Object.keys(vehicleWhere).length > 0 ? vehicleWhere : undefined,
+          required: true, // This ensures we only get ads with matching vehicles
+        },
+        {
+          model: User,
+          as: "dealer",
+          attributes: ["id", "fullname", "email", "phone", "role", "image"],
+          include: [
+            {
+              model: Dealer,
+              as: "dealer",
+              attributes: [
+                "id",
+                "location",
+                "status",
+                "image",
+                "availableCarListing",
+                "closingTime",
+                "openingTime",
+              ],
+              where: Object.keys(dealerWhere).length ? dealerWhere : undefined,
+              required: dealerStatusArray && dealerStatusArray.length > 0, // Only require if filter is applied
+            },
+          ],
+        },
+      ],
+      limit: parseInt(limit),
+      offset,
+      order,
+      distinct: true, // Important for correct count with includes
+    };
+
+    // -----------------------------
+    // FETCH DATA WITH COUNT
+    // -----------------------------
+    const { rows: ads, count: filteredCount } =
+      await Advertisement.findAndCountAll(query);
+
+    // -----------------------------
+    // TOTAL VEHICLES IN DATABASE
+    // -----------------------------
+    const totalVehicles = await Vehicle.count();
+
+    // -----------------------------
+    // AGGREGATION COUNTS (for filters) - ONLY FOR FEATURED ADS
+    // -----------------------------
+    const aggregateAttributes = [
+      "city",
+      "province",
+      "make",
+      "bodyType",
+      "fuelType",
+      "transmission",
+      "color",
+      "modelCategory",
+    ];
+
+    const aggregateData = {};
+    for (const attr of aggregateAttributes) {
+      const rows = await Vehicle.findAll({
+        attributes: [
+          [col(attr), attr],
+          [fn("COUNT", col(attr)), "count"],
+        ],
+        include: [
+          {
+            model: Advertisement,
+            as: "advertisement",
+            attributes: [],
+            where: { adType: "featured" },
+            required: true,
+          },
         ],
         group: [col(attr)],
         where: {

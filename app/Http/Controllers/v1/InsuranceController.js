@@ -49,10 +49,6 @@ o.getAllInsurance = async function (req, res, next) {
 
     const totalPages = Math.ceil(total / limit);
 
-    if (!insurances || insurances.length === 0) {
-      return json.errorResponse(res, "No insurances found", 404);
-    }
-
     return json.successResponse(res, {
       currentPage: parseInt(page),
       totalPages,
@@ -66,8 +62,9 @@ o.getAllInsurance = async function (req, res, next) {
 
 o.getInsurnaceProfile = async function (req, res, next) {
   try {
-    const { id } = req.params;
-    const insurance = await Insurance.findByPk(id, {
+    const { slug } = req.params;
+    const insurance = await Insurance.findOne({
+      where: { slug },
       include: [
         {
           model: User,

@@ -48,7 +48,7 @@ o.addReview = async (req, res, next) => {
       text,
     });
 
-    return json.successResponse(res, newReview, "Review added successfully");
+    return json.successResponse(res, "Review added successfully", 200);
   } catch (error) {
     return json.errorResponse(res, error.message, 400);
   }
@@ -68,10 +68,6 @@ o.getReviewsForUser = async function (req, res, next) {
         },
       ],
     });
-
-    if (!reviews || reviews.length === 0) {
-      return json.errorResponse(res, "No reviews found for this user", 404);
-    }
 
     return json.successResponse(res, reviews, 200);
   } catch (error) {
