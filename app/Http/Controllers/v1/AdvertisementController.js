@@ -65,6 +65,18 @@ o.getAdDetails = async function (req, res, next) {
         {
           model: Vehicle,
           as: "vehicle",
+          include: [
+            {
+              model: User,
+              as: "user",
+              include: [
+                {
+                  model: Dealer,
+                  as: "dealer",
+                },
+              ],
+            },
+          ],
         },
       ],
     });
@@ -758,10 +770,7 @@ o.getSimilarAds = async function (req, res, next) {
 o.updateAdStatus = async function (req, res, next) {
   try {
     const { id } = req.params;
-    const { status } = req.body;
-
-    // Validate input
-    validateRequiredFieldsSequentially(req.body, ["status"]);
+    const { status, endDate } = req.body;
 
     // Ensure user is a dealer
     if (req.decoded.role !== "dealer") {
@@ -786,14 +795,15 @@ o.updateAdStatus = async function (req, res, next) {
     }
 
     // Update status
-    ad.status = status;
+    if (status) {
+      ad.status = status;
+    }
+    if (ad.endDate) {
+      ad.endDate = endDate;
+    }
     await ad.save();
 
-    return json.successResponse(
-      res,
-      `Updated ad status to "${status}" successfully`,
-      200
-    );
+    return json.successResponse(res, `Ad updated Successfully`, 200);
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }

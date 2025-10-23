@@ -308,4 +308,28 @@ o.cancelSubscription = async function (req, res, next) {
   }
 };
 
+o.getUserSubscription = async function (req, res, next) {
+  try {
+    const userId = req.decoded.id;
+
+    const subscription = await Subscription.findOne({
+      where: { userId },
+      include: [
+        {
+          model: User,
+          as: "user",
+        },
+      ],
+    });
+
+    if (!subscription) {
+      return json.errorResponse(res, "Subscription Not Found", 404);
+    }
+
+    return json.showOne(res, subscription, 200);
+  } catch (error) {
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
+
 module.exports = o;

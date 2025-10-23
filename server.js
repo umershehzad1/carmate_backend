@@ -6,6 +6,7 @@ require("./config/connection");
 
 const express = require("express");
 const http = require("http");
+const path = require("path");
 const { Server } = require("socket.io");
 const cors = require("cors");
 const userRoutes = require("./routes/UserRoutes");
@@ -41,7 +42,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 require("./cronjobs/clearOldNotifications");
 // API Routes
-app.use("/public", express.static("public"));
+app.use(express.static(path.join(__dirname, "public")));
 
 app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/vehicle", vehicleRoutes);

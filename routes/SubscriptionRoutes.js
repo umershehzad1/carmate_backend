@@ -16,4 +16,8 @@ router.post(
 router
   .route("/cancelsubscription")
   .delete(authCtrl.authenticate, subscriptionCtrl.cancelSubscription);
+
+router
+  .route("/getusersubscription")
+  .get(authCtrl.authenticate, subscriptionCtrl.getUserSubscription);
 module.exports = router;

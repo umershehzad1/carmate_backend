@@ -2,12 +2,14 @@
 
 const path = require("path");
 const fs = require("fs");
+const csv = require("csv-parser");
 const slugify = require("slugify");
 const json = require("../../../Traits/ApiResponser"); // Your custom response helper
 const db = require("../../../Models/index");
 const { Op, where } = require("sequelize");
 const Vehicle = db.Vehicle;
 const Dealer = db.Dealer;
+const Advertisement = db.Advertisement;
 const User = db.User;
 // Sequential field validation function
 function validateRequiredFieldsSequentially(body, requiredFields) {
@@ -69,7 +71,6 @@ o.addVehicle = async function (req, res, next) {
       "province",
       "make",
       "model",
-      "modelCategory",
       "mileage",
       "doors",
       "transmission",
@@ -166,7 +167,7 @@ o.addVehicle = async function (req, res, next) {
     // Handle uploaded files from req.files
     const finalImages = [];
     if (req.files && req.files.length > 0) {
-      const destination = path.join(__dirname, "../../../public/uploads/");
+      const destination = path.join(__dirname, "/app/public/uploads/");
 
       if (!fs.existsSync(destination)) {
         fs.mkdirSync(destination, { recursive: true });
@@ -179,7 +180,7 @@ o.addVehicle = async function (req, res, next) {
         fs.writeFileSync(destination + filename, file.buffer);
 
         const serverAddress = req.protocol + "://" + req.headers.host + "/";
-        finalImages.push(serverAddress + "public/uploads/" + filename);
+        finalImages.push(serverAddress + "app/public/uploads/" + filename);
       });
     }
 
@@ -254,6 +255,166 @@ o.addVehicle = async function (req, res, next) {
     return json.showOne(res, vehicle, 200);
   } catch (error) {
     console.error("addVehicle Error:", error);
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
+
+o.bulkUploadVehicles = async function (req, res, next) {
+  try {
+    const { role, id } = req.decoded;
+
+    // Authorization check
+    if (role !== "dealer") {
+      return json.errorResponse(res, "Unauthorized access", 401);
+    }
+
+    if (!req.file) {
+      return json.errorResponse(res, "CSV file is required", 400);
+    }
+
+    const filePath = path.resolve(req.file.path);
+    const vehicles = [];
+    const errors = [];
+    const validConditions = ["used", "new", "certified"];
+    const validStatuses = ["live", "draft", "sold"];
+
+    // Read CSV file
+    await new Promise((resolve, reject) => {
+      fs.createReadStream(filePath)
+        .pipe(csv())
+        .on("data", (row) => {
+          try {
+            // Basic validation for required fields
+            const requiredFields = [
+              "name",
+              "price",
+              "city",
+              "province",
+              "make",
+              "model",
+              "modelCategory",
+              "mileage",
+              "doors",
+              "transmission",
+              "fuelType",
+              "registerIn",
+              "assemblyIn",
+              "bodyType",
+              "color",
+              "engineCapacity",
+              "condition",
+              "exteriorColor",
+              "year",
+              "drive",
+              "location",
+            ];
+
+            const missingField = validateRequiredFieldsSequentially(
+              row,
+              requiredFields
+            );
+            if (missingField) {
+              errors.push({ row, error: `Missing field: ${missingField}` });
+              return;
+            }
+
+            // Validate enums
+            if (row.condition && !validConditions.includes(row.condition)) {
+              errors.push({
+                row,
+                error: `Invalid condition '${row.condition}'`,
+              });
+              return;
+            }
+
+            if (row.status && !validStatuses.includes(row.status)) {
+              errors.push({
+                row,
+                error: `Invalid status '${row.status}'`,
+              });
+              return;
+            }
+
+            // Parse and validate fields
+            const parsedVehicle = {
+              dealerId: id,
+              name: row.name,
+              slug: slugify(
+                `${row.name}-${row.model}-${row.color}-${row.mileage}-${Date.now()}`,
+                { lower: true }
+              ),
+              images: row.images ? row.images.split("|") : [],
+              price: row.price,
+              city: row.city,
+              province: row.province,
+              make: row.make,
+              model: row.model,
+              modelCategory: row.modelCategory,
+              mileage: row.mileage,
+              doors: parseInt(row.doors, 10) || 0,
+              transmission: row.transmission,
+              fuelType: row.fuelType,
+              registerIn: row.registerIn,
+              assemblyIn: row.assemblyIn,
+              bodyType: row.bodyType,
+              color: row.color,
+              status: "draft",
+              engineCapacity: row.engineCapacity,
+              interiorDetails: row.interiorDetails
+                ? JSON.parse(row.interiorDetails)
+                : null,
+              exteriorDetails: row.exteriorDetails
+                ? JSON.parse(row.exteriorDetails)
+                : null,
+              safetyFeatures: row.safetyFeatures
+                ? JSON.parse(row.safetyFeatures)
+                : null,
+              specifications: row.specifications
+                ? JSON.parse(row.specifications)
+                : null,
+              description: row.description || "",
+              tags: row.tags ? row.tags.split("|") : [],
+              condition: row.condition || "used",
+              exteriorColor: row.exteriorColor,
+              year: row.year,
+              drive: row.drive,
+              location: row.location,
+            };
+
+            vehicles.push(parsedVehicle);
+          } catch (err) {
+            errors.push({ row, error: err.message });
+          }
+        })
+        .on("end", resolve)
+        .on("error", reject);
+    });
+
+    // Cleanup CSV file
+    fs.unlinkSync(filePath);
+
+    if (vehicles.length === 0) {
+      return json.errorResponse(
+        res,
+        errors.length
+          ? `No valid rows. Found ${errors.length} invalid rows.`
+          : "CSV file is empty or invalid",
+        400
+      );
+    }
+
+    // Bulk create vehicles
+    const createdVehicles = await Vehicle.bulkCreate(vehicles, {
+      validate: true,
+    });
+
+    return json.showAll(res, {
+      created: createdVehicles.length,
+      failed: errors.length,
+      errors,
+    });
+  } catch (error) {
+    console.error("uploadVehiclesFromCSV Error:", error);
     return json.errorResponse(res, error.message || error, 400);
   }
 };
@@ -469,14 +630,35 @@ o.getAllVehicles = async function (req, res) {
 o.deleteVehicle = async function (req, res, next) {
   try {
     const { id } = req.params;
-    const vehicle = await Vehicle.findByPk(id);
     const dealerId = req.decoded.id;
-    if (vehicle.dealerId !== dealerId) {
-      return json.errorResponse(res, "Unauthorized access", 401);
-    }
+
+    // Find vehicle by ID
+    const vehicle = await Vehicle.findByPk(id);
+
+    // Check if vehicle exists
     if (!vehicle) {
       return json.errorResponse(res, "Vehicle not found", 404);
     }
+
+    // Check if the vehicle belongs to the authenticated dealer
+    if (vehicle.dealerId !== dealerId) {
+      return json.errorResponse(res, "Unauthorized access", 401);
+    }
+
+    // Check if the vehicle is linked to any live advertisement
+    const advertisement = await Advertisement.findOne({
+      where: { vehicleId: id },
+    });
+
+    if (advertisement) {
+      return json.errorResponse(
+        res,
+        "This vehicle has a live ad and cannot be deleted.",
+        400
+      );
+    }
+
+    // Delete vehicle if no active ad exists
     await Vehicle.destroy({ where: { id } });
 
     return json.successResponse(res, "Vehicle deleted successfully.", 200);
