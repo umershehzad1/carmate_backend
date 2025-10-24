@@ -485,7 +485,9 @@ o.getAllFeaturesAds = async function (req, res, next) {
 
     const bodyTypeArray = parseArrayFilter(bodyType);
     if (bodyTypeArray && bodyTypeArray.length > 0) {
-      vehicleWhere.bodyType = { [Op.in]: bodyTypeArray };
+      vehicleWhere.bodyType = {
+        [Op.or]: bodyTypeArray.map((bt) => ({ [Op.iLike]: bt })),
+      };
     }
 
     const modelCategoryArray = parseArrayFilter(modelCategory);
