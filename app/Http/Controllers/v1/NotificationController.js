@@ -7,7 +7,7 @@ const json = require("../../../Traits/ApiResponser"); // Your custom response he
 const db = require("../../../Models/index");
 const { Op, where } = require("sequelize");
 
-const Notification = db.Notifications;
+const Notifications = db.Notifications;
 const Message = db.Message;
 const Conversation = db.Conversation;
 const User = db.User;
@@ -30,13 +30,20 @@ const o = {};
  */
 o.createNotification = async (req, res, io) => {
   try {
-    const { userId, type, content, messageId, testDriveRequestId, referralId } =
-      req.body;
+    const {
+      receiverId,
+      type,
+      content,
+      messageId,
+      testDriveRequestId,
+      referralId,
+    } = req.body;
 
     validateRequiredFieldsSequentially(req.body, ["userId", "type", "content"]);
 
-    const notification = await Notification.create({
-      userId,
+    const notification = await Notifications.create({
+      senderId: req.decoded.id,
+      receiverId: receiverId,
       type,
       content,
       messageId: messageId || null,
@@ -46,7 +53,7 @@ o.createNotification = async (req, res, io) => {
 
     // Emit real-time notification via Socket.io
     if (io) {
-      io.to(`user_${userId}`).emit("new_notification", notification);
+      io.to(`user_${receiverId}`).emit("new_notification", notification);
     }
 
     return json.successResponse(
@@ -65,11 +72,23 @@ o.createNotification = async (req, res, io) => {
  */
 o.getUserNotifications = async (req, res) => {
   try {
-    const { userId } = req.params;
+    const userId = req.decoded.id;
 
-    const notifications = await Notification.findAll({
-      where: { userId },
-      include: [{ model: Message, as: "message" }],
+    const notifications = await Notifications.findAll({
+      where: { receiverId: userId },
+      include: [
+        { model: Message, as: "message" },
+        {
+          model: User,
+          as: "sender",
+          attributes: ["id", "fullname", "email", "phone", "image"],
+        },
+        {
+          model: User,
+          as: "receiver",
+          attributes: ["id", "fullname", "email", "phone", "image"],
+        },
+      ],
       order: [["createdAt", "DESC"]],
     });
 
@@ -86,7 +105,7 @@ o.markAsRead = async (req, res) => {
   try {
     const { notificationId } = req.params;
 
-    const notification = await Notification.findByPk(notificationId);
+    const notification = await Notifications.findByPk(notificationId);
     if (!notification) {
       return json.errorResponse(res, "Notification not found", 404);
     }
@@ -112,7 +131,7 @@ o.deleteNotification = async (req, res) => {
   try {
     const { notificationId } = req.params;
 
-    const deleted = await Notification.destroy({
+    const deleted = await Notifications.destroy({
       where: { id: notificationId },
     });
     if (!deleted) {

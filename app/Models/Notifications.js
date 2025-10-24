@@ -4,10 +4,17 @@ const { Model } = require("sequelize");
 module.exports = (sequelize, DataTypes) => {
   class Notifications extends Model {
     static associate(models) {
-      // Each notification belongs to a user (recipient)
+      // Each notification has a sender (user who triggered the notification)
       Notifications.belongsTo(models.User, {
-        foreignKey: "userId",
-        as: "recipient",
+        foreignKey: "senderId",
+        as: "sender",
+        onDelete: "CASCADE",
+      });
+
+      // Each notification has a receiver (user who receives the notification)
+      Notifications.belongsTo(models.User, {
+        foreignKey: "receiverId",
+        as: "receiver",
         onDelete: "CASCADE",
       });
 
@@ -26,7 +33,7 @@ module.exports = (sequelize, DataTypes) => {
 
       Notifications.belongsTo(models.Referral, {
         foreignKey: "referralId",
-        as: "Referral",
+        as: "referral",
         onDelete: "CASCADE",
       });
     }
@@ -34,7 +41,12 @@ module.exports = (sequelize, DataTypes) => {
 
   Notifications.init(
     {
-      userId: {
+      senderId: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        references: { model: "Users", key: "id" },
+      },
+      receiverId: {
         type: DataTypes.INTEGER,
         allowNull: false,
         references: { model: "Users", key: "id" },
@@ -70,7 +82,6 @@ module.exports = (sequelize, DataTypes) => {
     {
       sequelize,
       modelName: "Notifications",
-      tableName: "notifications",
       timestamps: true,
     }
   );

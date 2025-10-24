@@ -9,6 +9,8 @@ const notificationController = require("../app/Http/Controllers/v1/NotificationC
  * Example:
  *   app.use((req, res, next) => { req.io = io; next(); });
  */
+
+const authCtrl = require("../app/Http/Controllers/v1/AuthController");
 const attachIO = (io) => (req, res, next) => {
   req.io = io;
   next();
@@ -20,7 +22,11 @@ router.post("/", (req, res) =>
 );
 
 // Get all notifications for a user
-router.get("/user/:userId", notificationController.getUserNotifications);
+router.get(
+  "/user",
+  authCtrl.authenticate,
+  notificationController.getUserNotifications
+);
 
 // Mark a notification as read
 router.patch("/:notificationId/read", notificationController.markAsRead);

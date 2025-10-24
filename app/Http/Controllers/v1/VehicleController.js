@@ -51,6 +51,7 @@ o.addVehicle = async function (req, res, next) {
       tags,
       condition,
       exteriorColor,
+      fuelConsumption,
       year,
       drive,
       location,
@@ -79,6 +80,7 @@ o.addVehicle = async function (req, res, next) {
       "assemblyIn",
       "bodyType",
       "color",
+      "fuelConsumption",
       "engineCapacity",
       "interiorDetails",
       "exteriorDetails",
@@ -167,20 +169,10 @@ o.addVehicle = async function (req, res, next) {
     // Handle uploaded files from req.files
     const finalImages = [];
     if (req.files && req.files.length > 0) {
-      const destination = path.join(__dirname, "/app/public/uploads/");
-
-      if (!fs.existsSync(destination)) {
-        fs.mkdirSync(destination, { recursive: true });
-      }
-
+      // Construct full URLs with server address
+      const serverAddress = req.protocol + "://" + req.headers.host;
       req.files.forEach((file) => {
-        const extension = path.extname(file.originalname) || ".jpg";
-        const filename =
-          Date.now() + "-" + Math.round(Math.random() * 1e9) + extension;
-        fs.writeFileSync(destination + filename, file.buffer);
-
-        const serverAddress = req.protocol + "://" + req.headers.host + "/";
-        finalImages.push(serverAddress + "app/public/uploads/" + filename);
+        finalImages.push(`${serverAddress}/uploads/vehicles/${file.filename}`);
       });
     }
 
@@ -222,6 +214,7 @@ o.addVehicle = async function (req, res, next) {
       transmission,
       fuelType,
       registerIn,
+      fuelConsumption,
       assemblyIn,
       bodyType,
       color,
@@ -343,7 +336,15 @@ o.bulkUploadVehicles = async function (req, res, next) {
                 `${row.name}-${row.model}-${row.color}-${row.mileage}-${Date.now()}`,
                 { lower: true }
               ),
-              images: row.images ? row.images.split("|") : [],
+              images: row.images
+                ? row.images.split("|").map((img) => {
+                    const serverAddress =
+                      req.protocol + "://" + req.headers.host;
+                    return img.startsWith("http")
+                      ? img
+                      : `${serverAddress}${img}`;
+                  })
+                : [],
               price: row.price,
               city: row.city,
               province: row.province,

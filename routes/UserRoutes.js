@@ -2,9 +2,35 @@
 
 const express = require("express");
 const multer = require("multer");
+const path = require("path");
+
+// Configure multer for user image uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, path.join(__dirname, "../public/uploads/user"));
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname) || ".jpg";
+    cb(null, uniqueSuffix + ext);
+  },
+});
+
 const upload = multer({
-  storage: multer.memoryStorage({}),
-  limits: { fileSize: 500000000 },
+  storage: storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: function (req, file, cb) {
+    const allowedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(
+        new Error(
+          "Invalid file type. Only JPEG, PNG, GIF and WEBP are allowed."
+        )
+      );
+    }
+  },
 });
 
 /** Controllers **/

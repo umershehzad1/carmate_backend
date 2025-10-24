@@ -187,21 +187,9 @@ o.edit = async (req, res, next) => {
 
     // Handle image upload
     if (req.file) {
-      const extension = req.body.extension || "jpg";
-      const filename = Date.now() + "." + extension;
-      const destination = path.join(__dirname, "../../../../public/uploads/");
-
-      // Ensure directory exists
-      if (!fs.existsSync(destination)) {
-        fs.mkdirSync(destination, { recursive: true });
-      }
-
-      // Write file to server
-      fs.writeFileSync(destination + filename, req.file.buffer);
-
-      // Construct URL path for storing in DB
-      const serverAddress = req.protocol + "://" + req.headers.host + "/";
-      properties.image = serverAddress + "public/uploads/" + filename;
+      // Construct full URL with server address
+      const serverAddress = req.protocol + "://" + req.headers.host;
+      properties.image = `${serverAddress}/uploads/user/${req.file.filename}`;
     }
 
     // Find the user first

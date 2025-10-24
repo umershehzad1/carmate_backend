@@ -16,7 +16,9 @@ const router = express.Router();
 
 router
   .route("/")
-  .post(authCtrl.authenticate, testDriveRequestCtrl.addTestDriveRequest);
+  .post(authCtrl.authenticate, (req, res) =>
+    testDriveRequestCtrl.addTestDriveRequest(req, res, global.io)
+  );
 router
   .route("/getAllTestDriveRequests")
   .get(authCtrl.authenticate, testDriveRequestCtrl.getAllTestDriveRequests);

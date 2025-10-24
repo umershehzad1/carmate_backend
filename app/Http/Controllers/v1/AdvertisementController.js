@@ -175,7 +175,6 @@ o.getAllAds = async function (req, res, next) {
       fuelType,
       assemblyIn,
       bodyType,
-      modelCategory,
       dealerStatus,
     } = req.query;
 
@@ -243,11 +242,6 @@ o.getAllAds = async function (req, res, next) {
     const bodyTypeArray = parseArrayFilter(bodyType);
     if (bodyTypeArray && bodyTypeArray.length > 0) {
       vehicleWhere.bodyType = { [Op.in]: bodyTypeArray };
-    }
-
-    const modelCategoryArray = parseArrayFilter(modelCategory);
-    if (modelCategoryArray && modelCategoryArray.length > 0) {
-      vehicleWhere.modelCategory = { [Op.in]: modelCategoryArray };
     }
 
     // Range filters

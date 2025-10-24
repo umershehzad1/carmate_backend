@@ -77,6 +77,7 @@ module.exports = (sequelize, DataTypes) => {
       year: DataTypes.STRING,
       drive: DataTypes.STRING,
       location: DataTypes.STRING,
+      fuelConsumption: DataTypes.STRING,
     },
     {
       sequelize,

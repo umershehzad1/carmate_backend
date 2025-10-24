@@ -13,21 +13,23 @@ const uploadCtrl = require("../app/Http/Controllers/v1/UploadController");
 /** Validation **/
 const userReq = require("../app/Http/Requests/UserValidator");
 
-// Create uploads directory if it doesn't exist
-const uploadsDir = path.join(__dirname, "../../../public/uploads");
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
-// Multer configuration for disk storage
+// Multer configuration for vehicle image storage
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, uploadsDir);
+    const vehicleUploadsDir = path.join(
+      __dirname,
+      "../public/uploads/vehicles"
+    );
+    // Ensure directory exists
+    if (!fs.existsSync(vehicleUploadsDir)) {
+      fs.mkdirSync(vehicleUploadsDir, { recursive: true });
+    }
+    cb(null, vehicleUploadsDir);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname);
-    cb(null, "upload-" + uniqueSuffix + ext);
+    const ext = path.extname(file.originalname) || ".jpg";
+    cb(null, "vehicle-" + uniqueSuffix + ext);
   },
 });
 
@@ -62,7 +64,7 @@ const uploadCSV = multer({
 });
 
 const uploadImages = multer({
-  storage: multer.memoryStorage(), // Keep images in memory (they'll be uploaded to cloud)
+  storage: storage, // Use the disk storage configuration
   fileFilter: imageFileFilter,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB per image
 });

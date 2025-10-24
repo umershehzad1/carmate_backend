@@ -9,6 +9,7 @@ const { Op, where } = require("sequelize");
 const TestDriveRequest = db.TestDriveRequest;
 const Vehicle = db.Vehicle;
 const User = db.User;
+const Notifications = db.Notifications;
 // Sequential field validation function
 function validateRequiredFieldsSequentially(body, requiredFields) {
   for (const field of requiredFields) {
@@ -20,26 +21,77 @@ function validateRequiredFieldsSequentially(body, requiredFields) {
 }
 
 const o = {};
+const createAndEmitNotification = async (data, io) => {
+  const {
+    receiverId,
+    senderId,
+    type,
+    content,
+    messageId,
+    testDriveRequestId,
+    referralId,
+  } = data;
 
-o.addTestDriveRequest = async function (req, res) {
+  try {
+    const notification = await Notifications.create({
+      receiverId,
+      senderId,
+      type,
+      content,
+      messageId: messageId || null,
+      testDriveRequestId: testDriveRequestId || null,
+      referralId: referralId || null,
+      isRead: false,
+    });
+
+    // Emit real-time notification
+    if (io) {
+      io.to(`user_${receiverId}`).emit("new_notification", notification);
+    }
+
+    return notification;
+  } catch (error) {
+    console.error("Error creating notification:", error);
+    throw error;
+  }
+};
+
+o.addTestDriveRequest = async function (req, res, io) {
   try {
     const { vehicleId, requestedDate } = req.body;
-    const id = req.decoded.id;
+    const userId = req.decoded.id;
+
     validateRequiredFieldsSequentially(req.body, [
       "vehicleId",
       "requestedDate",
     ]);
+
     const vehicle = await Vehicle.findByPk(vehicleId);
     if (!vehicle) {
       return json.errorResponse(res, "Vehicle not found", 404);
     }
 
+    const user = await User.findByPk(userId);
+
     const testDriveRequest = await TestDriveRequest.create({
       vehicleId: vehicleId,
-      userId: id,
+      userId: userId,
       requestedDate,
     });
-    return json.showOne(res, testDriveRequest, 200);
+
+    // Send notification using helper
+    await createAndEmitNotification(
+      {
+        senderId: userId,
+        receiverId: vehicle.dealerId,
+        type: "test_drive",
+        content: `${user.fullname} requested a test drive for ${vehicle.name}`,
+        testDriveRequestId: testDriveRequest.id,
+      },
+      io
+    );
+
+    return json.successResponse(res, "Test Drive Requested Successfully.", 200);
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }
