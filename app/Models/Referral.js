@@ -4,19 +4,21 @@ const { Model } = require("sequelize");
 module.exports = (sequelize, DataTypes) => {
   class Referral extends Model {
     static associate(models) {
-      // Each repair referral belongs to a customer
+      // Customer who made the referral
       Referral.belongsTo(models.User, {
         foreignKey: "customerId",
         as: "customer",
         onDelete: "CASCADE",
       });
 
-      // Each repair referral belongs to a vehicle
-      Referral.belongsTo(models.Vehicle, {
-        foreignKey: "vehicleId",
-        as: "vehicle",
-        onDelete: "CASCADE",
+      // User assigned to handle the referral
+      Referral.belongsTo(models.User, {
+        foreignKey: "assignedToId",
+        as: "assignedTo",
+        onDelete: "SET NULL",
       });
+
+      // Notifications related to this referral
       Referral.hasMany(models.Notifications, {
         foreignKey: "referralId",
         as: "notifications",
@@ -31,19 +33,32 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         references: { model: "Users", key: "id" },
       },
+      assignedToId: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: { model: "Users", key: "id" },
+      },
       jobType: {
         type: DataTypes.ENUM("repair", "insurance"),
         allowNull: false,
       },
+      jobCategory: {
+        type: DataTypes.STRING,
+        allowNull: true,
+      },
+      // 👇 New: description or details about the job
+      jobDescription: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
       status: {
-        type: DataTypes.ENUM("inprogress", "completed"),
-        defaultValue: "inprogress",
+        type: DataTypes.ENUM("new", "inprogress", "completed"),
+        defaultValue: "new",
         allowNull: false,
       },
-      vehicleId: {
-        type: DataTypes.INTEGER,
+      vehicleName: {
+        type: DataTypes.STRING,
         allowNull: false,
-        references: { model: "Vehicles", key: "id" },
       },
       requestedDate: {
         type: DataTypes.DATE,

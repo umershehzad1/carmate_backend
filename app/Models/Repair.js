@@ -25,7 +25,7 @@ module.exports = (sequelize, DataTypes) => {
       },
 
       location: DataTypes.STRING,
-      experience: DataTypes.ARRAY(DataTypes.STRING),
+      experience: DataTypes.STRING,
       specialty: DataTypes.ARRAY(DataTypes.STRING),
       servicesOffer: DataTypes.ARRAY(DataTypes.STRING),
       AboutUs: DataTypes.STRING,

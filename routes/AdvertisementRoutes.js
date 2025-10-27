@@ -30,4 +30,5 @@ router.route("/getsimilarads/:slug").get(advertisementCtrl.getSimilarAds);
 router
   .route("/extendadcompaign/:id")
   .patch(authCtrl.authenticate, advertisementCtrl.extendAdCompaign);
+router.route("/registeradclick/:id").post(advertisementCtrl.registerAdClick);
 module.exports = router;

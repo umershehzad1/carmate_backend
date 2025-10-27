@@ -863,4 +863,20 @@ o.extendAdCompaign = async function (req, res, next) {
   }
 };
 
+o.registerAdClick = async function (req, res, next) {
+  try {
+    const { id } = req.params;
+    const ad = await Advertisement.findByPk(id);
+    if (!ad) {
+      return json.errorResponse(res, "Ad not found", 404);
+    }
+    ad.clicks = ad.clicks + 1;
+    ad.views = ad.views + 1;
+    await ad.save();
+    return json.successResponse(res, "Ad click registered.", 200);
+  } catch (error) {
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
+
 module.exports = o;

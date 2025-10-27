@@ -347,6 +347,7 @@ o.updateRole = async function (req, res, next) {
     const { id } = req.params;
     const { role } = req.body;
     console.log(req.body);
+    console.log("Role", role);
 
     // Step 1: Find user
     const user = await User.findByPk(id);

@@ -85,36 +85,48 @@ o.getRepairDetails = async function (req, res, next) {
 
 o.updateRepairProfile = async function (req, res, next) {
   try {
-    // Ensure only dealers can update their profile
-    if (req.decoded.role !== "repair") {
-      return json.errorResponse(
-        res,
-        "You are not authorized to perform this action",
-        403
-      );
-    }
-
     const userId = req.decoded.id;
 
     // Step 1: Find dealer by userId (the logged-in dealer)
-    const dealer = await Repair.findOne({
+    const repair = await Repair.findOne({
       where: { userId },
     });
 
-    if (!dealer) {
+    if (!repair) {
       return json.errorResponse(res, "Dealer not found", 404);
     }
 
-    // Step 2: Update the dealer record with provided fields
-    const updatedRepair = await dealer.update(req.body);
+    // Step 2: Prepare update data
+    const updateData = { ...req.body };
 
-    // Step 3: Return response
+    // Step 3: Handle uploaded files from req.files
+    if (req.files && req.files.length > 0) {
+      // Construct full URLs with server address
+      const serverAddress = req.protocol + "://" + req.headers.host;
+      const finalImages = [];
+
+      req.files.forEach((file) => {
+        finalImages.push(`${serverAddress}/uploads/gallery/${file.filename}`);
+      });
+
+      // Append new images to existing gallery array instead of replacing
+      const existingGallery = Array.isArray(repair.gallery)
+        ? repair.gallery
+        : [];
+      updateData.gallery = existingGallery.concat(finalImages);
+    }
+
+    // Step 4: Update the repair record with provided fields
+    const updatedRepair = await repair.update(updateData);
+
+    // Step 5: Return response with the updated record
     return json.successResponse(
       res,
-      "Repair profile updated successfully.",
+      "Repair profile updated successfully",
       200
     );
   } catch (error) {
+    console.error("updateRepairProfile Error:", error);
     return json.errorResponse(res, error.message || error, 400);
   }
 };
@@ -132,16 +144,16 @@ o.deleteRepairProfile = async function (req, res, next) {
 
     const userId = req.decoded.id;
 
-    const dealer = await Repair.findOne({
+    const repair = await Repair.findOne({
       where: { userId: userId },
     });
 
-    if (!dealer) {
+    if (!repair) {
       return json.errorResponse(res, "Dealer not found", 404);
     }
 
     // Step 2: Delete dealer record
-    await dealer.destroy();
+    await repair.destroy();
 
     // Step 3: Optionally, update user's role back to 'user' (recommended)
     const user = await User.findByPk(userId);

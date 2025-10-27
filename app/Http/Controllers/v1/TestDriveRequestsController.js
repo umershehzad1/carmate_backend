@@ -6,10 +6,10 @@ const slugify = require("slugify");
 const json = require("../../../Traits/ApiResponser"); // Your custom response helper
 const db = require("../../../Models/index");
 const { Op, where } = require("sequelize");
+const createAndEmitNotification = require("../../../Traits/CreateAndEmitNotification");
 const TestDriveRequest = db.TestDriveRequest;
 const Vehicle = db.Vehicle;
 const User = db.User;
-const Notifications = db.Notifications;
 // Sequential field validation function
 function validateRequiredFieldsSequentially(body, requiredFields) {
   for (const field of requiredFields) {
@@ -21,40 +21,6 @@ function validateRequiredFieldsSequentially(body, requiredFields) {
 }
 
 const o = {};
-const createAndEmitNotification = async (data, io) => {
-  const {
-    receiverId,
-    senderId,
-    type,
-    content,
-    messageId,
-    testDriveRequestId,
-    referralId,
-  } = data;
-
-  try {
-    const notification = await Notifications.create({
-      receiverId,
-      senderId,
-      type,
-      content,
-      messageId: messageId || null,
-      testDriveRequestId: testDriveRequestId || null,
-      referralId: referralId || null,
-      isRead: false,
-    });
-
-    // Emit real-time notification
-    if (io) {
-      io.to(`user_${receiverId}`).emit("new_notification", notification);
-    }
-
-    return notification;
-  } catch (error) {
-    console.error("Error creating notification:", error);
-    throw error;
-  }
-};
 
 o.addTestDriveRequest = async function (req, res, io) {
   try {

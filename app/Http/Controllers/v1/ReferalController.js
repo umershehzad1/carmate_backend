@@ -5,7 +5,8 @@ const fs = require("fs");
 const slugify = require("slugify");
 const json = require("../../../Traits/ApiResponser"); // Your custom response helper
 const db = require("../../../Models/index");
-const { Op, where } = require("sequelize");
+const { Op, where, Sequelize } = require("sequelize");
+const createAndEmitNotification = require("../../../Traits/CreateAndEmitNotification");
 const TestDriveRequest = db.TestDriveRequest;
 const Referral = db.Referral;
 const Vehicle = db.Vehicle;
@@ -24,26 +25,37 @@ const o = {};
 
 o.createReferral = async function (req, res, next) {
   try {
-    const { jobType, vehicleId, requestedDate } = req.body;
+    const { jobType, requestedDate, vehicleName, jobCategory, jobDescription } =
+      req.body;
     const { id } = req.decoded;
+    const { assignedToId } = req.params;
     validateRequiredFieldsSequentially(req.body, [
       "jobType",
-      "vehicleId",
+      "vehicleName",
       "requestedDate",
+      "jobDescription",
     ]);
-    const vehicle = await Vehicle.findByPk(vehicleId);
-    if (!vehicle) {
-      return json.errorResponse(res, "Vehicle not found", 404);
-    }
+    const user = await User.findByPk(id);
     const referral = await Referral.create({
       customerId: id,
+      vehicleName: vehicleName,
       jobType: jobType,
-      vehicleId: vehicleId,
-      userId: id,
+      assignedToId: assignedToId,
       requestedDate: requestedDate,
+      jobCategory,
+      jobDescription,
     });
-
-    return json.showOne(res, referral, 200);
+    createAndEmitNotification(
+      {
+        senderId: id,
+        receiverId: assignedToId,
+        type: "test_drive",
+        content: `${user.fullname} requested a ${jobCategory} for ${vehicleName}`,
+        referralId: referral.id,
+      },
+      io
+    );
+    return json.successResponse(res, "Requested successfully.", 200);
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }
@@ -55,21 +67,17 @@ o.getReferralDetails = async function (req, res, next) {
     const ReferralDetails = await Referral.findByPk(id, {
       include: [
         {
-          model: Vehicle,
-          as: "vehicle",
-        },
-        {
           model: User,
           as: "customer",
-          attributes: { exclude: [] },
+          attributes: { exclude: ["password"] },
         },
       ],
     });
-    console.log("referrals data:", ReferralDetails);
 
     if (!Referral) {
       return json.errorResponse(res, "Repair Referral Not Fount", 404);
     }
+
     return json.showOne(res, ReferralDetails, 200);
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
@@ -77,15 +85,12 @@ o.getReferralDetails = async function (req, res, next) {
 };
 
 o.getAllReferrals = async function (req, res, next) {
+  const { id } = req.decoded;
+  const { status } = req.params;
   try {
     const Referrals = await Referral.findAll({
+      where: { assignedToId: id, status: status },
       include: [
-        {
-          model: Vehicle,
-          as: "vehicle",
-          where: { dealerId: req.decoded.id },
-          required: true,
-        },
         {
           model: User,
           as: "customer",
@@ -93,10 +98,6 @@ o.getAllReferrals = async function (req, res, next) {
         },
       ],
     });
-
-    if (!Referrals || Referrals.length === 0) {
-      return json.errorResponse(res, "No repair referrals found", 404);
-    }
 
     return json.showAll(res, Referrals, 200);
   } catch (error) {
@@ -120,6 +121,55 @@ o.UpdateStatus = async function (req, res, next) {
       `Referral Status Update to ${status}`,
       200
     );
+  } catch (error) {
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
+
+o.getReferralsStats = async function (req, res, next) {
+  try {
+    const id = req.decoded.id; // logged-in user ID
+
+    // Fetch all referrals created by this user
+    const referrals = await Referral.findAll({
+      where: { assignedToId: id },
+      order: [["createdAt", "DESC"]],
+    });
+
+    // Calculate total count
+    const totalReferrals = referrals.length;
+
+    const statusStats = {
+      new: referrals.filter((r) => r.status === "new").length,
+      inprogress: referrals.filter((r) => r.status === "inprogress").length,
+      completed: referrals.filter((r) => r.status === "completed").length,
+    };
+
+    return json.showOne(res, { totalReferrals, statusStats, referrals }, 200);
+  } catch (error) {
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
+
+o.getMostInDemandServices = async function (req, res, next) {
+  try {
+    const id = req.decoded.id;
+
+    // Query to find top 4 most requested job categories for this user
+    const topServices = await Referral.findAll({
+      where: { assignedToId: id },
+      attributes: [
+        "jobCategory",
+        [Sequelize.fn("COUNT", Sequelize.col("jobCategory")), "count"],
+      ],
+      group: ["jobCategory"],
+      order: [[Sequelize.literal("count"), "DESC"]],
+      limit: 4,
+      raw: true,
+    });
+
+    // Format response
+    return json.showOne(res, topServices, 200);
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }

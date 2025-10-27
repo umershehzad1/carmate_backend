@@ -14,9 +14,17 @@ const upload = multer({
 
 const router = express.Router();
 
-router.route("/").post(authCtrl.authenticate, referralCtrl.createReferral);
 router
-  .route("/getallreferrals")
+  .route("/getreferralstats")
+  .get(authCtrl.authenticate, referralCtrl.getReferralsStats);
+router
+  .route("/getmostindemandservices")
+  .get(authCtrl.authenticate, referralCtrl.getMostInDemandServices);
+router
+  .route("/:assignedToId")
+  .post(authCtrl.authenticate, referralCtrl.createReferral);
+router
+  .route("/getallreferrals/:status")
   .get(authCtrl.authenticate, referralCtrl.getAllReferrals);
 router
   .route("/:id")
