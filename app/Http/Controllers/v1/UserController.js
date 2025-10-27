@@ -96,7 +96,7 @@ o.googleSignup = async function (req, res, next) {
       // Create new user if doesn't exist
       user = new User({
         email: req.body.email,
-        fullname: req.body.fullname,
+        fullname: req.body.name,
       });
       user = await user.save();
     }
