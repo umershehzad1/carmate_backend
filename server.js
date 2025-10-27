@@ -30,7 +30,7 @@ const notificationsRoutes = require("./routes/NotificationRoutes");
 const app = express();
 app.use(
   cors({
-    origin: "http://localhost:3000", // your frontend origin
+    origin: "*", // your frontend origin
     credentials: true, // allow cookies or auth headers
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization", "x-access-token"],
