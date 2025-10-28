@@ -71,6 +71,7 @@ const uploadImages = multer({
 
 const router = express.Router();
 
+router.route("/getallvehiclesmakes").get(vehicleCtrl.getAllMakes);
 // Vehicle Routes
 router.route("/addvehicle").post(
   authCtrl.authenticate,
@@ -93,5 +94,5 @@ router
 
 router.route("/:id").patch(authCtrl.authenticate, vehicleCtrl.updateVehicle);
 router.route("/:id").delete(authCtrl.authenticate, vehicleCtrl.deleteVehicle);
-
+router.route("/getallvehiclesmodels/:make").get(vehicleCtrl.getModelsByMake);
 module.exports = router;

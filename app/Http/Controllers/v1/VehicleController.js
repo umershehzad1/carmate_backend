@@ -6,11 +6,12 @@ const csv = require("csv-parser");
 const slugify = require("slugify");
 const json = require("../../../Traits/ApiResponser"); // Your custom response helper
 const db = require("../../../Models/index");
-const { Op, where } = require("sequelize");
+const { Op, where, Sequelize } = require("sequelize");
 const Vehicle = db.Vehicle;
 const Dealer = db.Dealer;
 const Advertisement = db.Advertisement;
 const User = db.User;
+const Make = db.Make;
 // Sequential field validation function
 function validateRequiredFieldsSequentially(body, requiredFields) {
   for (const field of requiredFields) {
@@ -662,6 +663,64 @@ o.deleteVehicle = async function (req, res, next) {
     await Vehicle.destroy({ where: { id } });
 
     return json.successResponse(res, "Vehicle deleted successfully.", 200);
+  } catch (error) {
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
+
+o.getModelsByMake = async function (req, res, next) {
+  try {
+    const { make } = req.params;
+
+    // Validate make parameter
+    if (!make || make.trim() === "") {
+      return json.errorResponse(res, "Make name is required", 400);
+    }
+
+    // Find all models for the given make (case-insensitive)
+    const models = await Make.findAll({
+      where: {
+        make: {
+          [Op.iLike]: make, // ✅ use make, not makeName
+        },
+      },
+      attributes: ["id", "make", "model"],
+      order: [["model", "ASC"]],
+      raw: true,
+    });
+
+    // Check if models exist
+    if (models.length === 0) {
+      return json.errorResponse(res, `No models found for make: ${make}`, 404);
+    }
+
+    // Prepare response data
+    const responseData = {
+      make: models[0].make,
+      totalModels: models.length,
+      models: models.map((m) => ({
+        id: m.id,
+        model: m.model,
+      })),
+    };
+
+    return json.successResponse(res, models, 200);
+  } catch (error) {
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
+
+o.getAllMakes = async function (req, res, next) {
+  try {
+    const makes = await Make.findAll({
+      attributes: [[Sequelize.fn("DISTINCT", Sequelize.col("make")), "make"]],
+      raw: true,
+    });
+
+    // Extract only the 'make' values into a plain array
+    const responseData = makes.map((item) => item.make);
+
+    return json.successResponse(res, responseData, 200);
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }

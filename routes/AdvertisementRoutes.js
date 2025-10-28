@@ -17,7 +17,9 @@ const router = express.Router();
 router
   .route("/createad")
   .post(authCtrl.authenticate, advertisementCtrl.createAd);
-
+router
+  .route("/getdealerstats")
+  .get(authCtrl.authenticate, advertisementCtrl.getDealerStats);
 router.route("/getalldealerads/:id").get(advertisementCtrl.getAllDealerAds);
 router.route("/getallads").get(advertisementCtrl.getAllAds);
 router.route("/getallfeaturesads").get(advertisementCtrl.getAllFeaturesAds);

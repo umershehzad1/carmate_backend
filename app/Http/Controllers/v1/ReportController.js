@@ -8,6 +8,7 @@ const db = require("../../../Models/index");
 const { Op, where } = require("sequelize");
 const ReportedContent = db.ReportedContent;
 const Vehicle = db.Vehicle;
+const Dealer = db.Dealer;
 const User = db.User;
 // Sequential field validation function
 function validateRequiredFieldsSequentially(body, requiredFields) {
@@ -69,7 +70,26 @@ o.getReportDetails = async function (req, res, next) {
 
 o.getAllReports = async function (req, res, next) {
   try {
-    const reports = await ReportedContent.findAll();
+    const reports = await ReportedContent.findAll({
+      include: [
+        {
+          model: Vehicle,
+          as: "vehicle",
+          include: [
+            {
+              model: User,
+              as: "user",
+              include: [
+                {
+                  model: Dealer,
+                  as: "dealer",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
     if (!reports) {
       return json.errorResponse(res, "No reports found", 404);
     }

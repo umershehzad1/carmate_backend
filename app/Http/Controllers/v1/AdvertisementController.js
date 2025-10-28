@@ -94,7 +94,7 @@ o.getAllDealerAds = async function (req, res, next) {
   try {
     // Extract pagination parameters from query (with defaults)
     const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 10;
+    const limit = parseInt(req.query.limit, 100) || 100;
     const offset = (page - 1) * limit;
 
     // Fetch paginated ads with associations
@@ -198,85 +198,62 @@ o.getAllAds = async function (req, res, next) {
     // Apply filters with array support
     if (keyword) vehicleWhere.name = { [Op.iLike]: `%${keyword}%` };
 
-    // Handle array filters - use Op.in for multiple values
     const cityArray = parseArrayFilter(city);
-    if (cityArray && cityArray.length > 0) {
-      vehicleWhere.city = { [Op.in]: cityArray };
-    }
+    if (cityArray?.length) vehicleWhere.city = { [Op.in]: cityArray };
 
     const provinceArray = parseArrayFilter(province);
-    if (provinceArray && provinceArray.length > 0) {
+    if (provinceArray?.length)
       vehicleWhere.province = { [Op.in]: provinceArray };
-    }
 
     const makeArray = parseArrayFilter(make);
-    if (makeArray && makeArray.length > 0) {
-      vehicleWhere.make = { [Op.in]: makeArray };
-    }
+    if (makeArray?.length) vehicleWhere.make = { [Op.in]: makeArray };
 
     const registerInArray = parseArrayFilter(registerIn);
-    if (registerInArray && registerInArray.length > 0) {
+    if (registerInArray?.length)
       vehicleWhere.registerIn = { [Op.in]: registerInArray };
-    }
 
     const transmissionArray = parseArrayFilter(transmission);
-    if (transmissionArray && transmissionArray.length > 0) {
+    if (transmissionArray?.length)
       vehicleWhere.transmission = { [Op.in]: transmissionArray };
-    }
 
     const colorArray = parseArrayFilter(color);
-    if (colorArray && colorArray.length > 0) {
-      vehicleWhere.color = { [Op.in]: colorArray };
-    }
+    if (colorArray?.length) vehicleWhere.color = { [Op.in]: colorArray };
 
     const fuelTypeArray = parseArrayFilter(fuelType);
-    if (fuelTypeArray && fuelTypeArray.length > 0) {
+    if (fuelTypeArray?.length)
       vehicleWhere.fuelType = { [Op.in]: fuelTypeArray };
-    }
 
     const assemblyInArray = parseArrayFilter(assemblyIn);
-    if (assemblyInArray && assemblyInArray.length > 0) {
+    if (assemblyInArray?.length)
       vehicleWhere.assemblyIn = { [Op.in]: assemblyInArray };
-    }
 
     const bodyTypeArray = parseArrayFilter(bodyType);
-    if (bodyTypeArray && bodyTypeArray.length > 0) {
+    if (bodyTypeArray?.length)
       vehicleWhere.bodyType = { [Op.in]: bodyTypeArray };
-    }
 
     // Range filters
-    if (minPrice && maxPrice) {
+    if (minPrice && maxPrice)
       vehicleWhere.price = { [Op.between]: [minPrice, maxPrice] };
-    } else if (minPrice) {
-      vehicleWhere.price = { [Op.gte]: minPrice };
-    } else if (maxPrice) {
-      vehicleWhere.price = { [Op.lte]: maxPrice };
-    }
+    else if (minPrice) vehicleWhere.price = { [Op.gte]: minPrice };
+    else if (maxPrice) vehicleWhere.price = { [Op.lte]: maxPrice };
 
-    if (minYear && maxYear) {
+    if (minYear && maxYear)
       vehicleWhere.model = { [Op.between]: [minYear, maxYear] };
-    } else if (minYear) {
-      vehicleWhere.model = { [Op.gte]: minYear };
-    } else if (maxYear) {
-      vehicleWhere.model = { [Op.lte]: maxYear };
-    }
+    else if (minYear) vehicleWhere.model = { [Op.gte]: minYear };
+    else if (maxYear) vehicleWhere.model = { [Op.lte]: maxYear };
 
-    if (minMileage && maxMileage) {
+    if (minMileage && maxMileage)
       vehicleWhere.mileage = { [Op.between]: [minMileage, maxMileage] };
-    } else if (minMileage) {
-      vehicleWhere.mileage = { [Op.gte]: minMileage };
-    } else if (maxMileage) {
-      vehicleWhere.mileage = { [Op.lte]: maxMileage };
-    }
+    else if (minMileage) vehicleWhere.mileage = { [Op.gte]: minMileage };
+    else if (maxMileage) vehicleWhere.mileage = { [Op.lte]: maxMileage };
 
     // -----------------------------
     // DEALER FILTER
     // -----------------------------
     const dealerWhere = {};
     const dealerStatusArray = parseArrayFilter(dealerStatus);
-    if (dealerStatusArray && dealerStatusArray.length > 0) {
+    if (dealerStatusArray?.length)
       dealerWhere.status = { [Op.in]: dealerStatusArray };
-    }
 
     // -----------------------------
     // SORT ORDER
@@ -287,15 +264,20 @@ o.getAllAds = async function (req, res, next) {
     // -----------------------------
     // MAIN QUERY
     // -----------------------------
+    const adWhere = {
+      status: "running", // ✅ Only include ads that are running
+    };
+
+    if (adType) adWhere.adType = adType;
+
     const query = {
-      where: adType ? { adType } : {},
+      where: adWhere,
       include: [
         {
           model: Vehicle,
           as: "vehicle",
-          where:
-            Object.keys(vehicleWhere).length > 0 ? vehicleWhere : undefined,
-          required: true, // This ensures we only get ads with matching vehicles
+          where: Object.keys(vehicleWhere).length ? vehicleWhere : undefined,
+          required: true,
         },
         {
           model: User,
@@ -315,7 +297,7 @@ o.getAllAds = async function (req, res, next) {
                 "openingTime",
               ],
               where: Object.keys(dealerWhere).length ? dealerWhere : undefined,
-              required: dealerStatusArray && dealerStatusArray.length > 0, // Only require if filter is applied
+              required: dealerStatusArray?.length > 0,
             },
           ],
         },
@@ -323,7 +305,7 @@ o.getAllAds = async function (req, res, next) {
       limit: parseInt(limit),
       offset,
       order,
-      distinct: true, // Important for correct count with includes
+      distinct: true,
     };
 
     // -----------------------------
@@ -359,9 +341,7 @@ o.getAllAds = async function (req, res, next) {
           [fn("COUNT", col(attr)), "count"],
         ],
         group: [col(attr)],
-        where: {
-          [attr]: { [Op.ne]: null }, // exclude nulls
-        },
+        where: { [attr]: { [Op.ne]: null } },
         raw: true,
       });
       aggregateData[attr] = rows;
@@ -374,8 +354,8 @@ o.getAllAds = async function (req, res, next) {
       success: true,
       message:
         ads.length > 0
-          ? "Ads fetched successfully"
-          : "No ads found matching your criteria",
+          ? "Running ads fetched successfully"
+          : "No running ads found matching your criteria",
       pagination: {
         totalFiltered: filteredCount,
         totalAllVehicles: totalVehicles,
@@ -384,8 +364,8 @@ o.getAllAds = async function (req, res, next) {
         totalPages: Math.ceil(filteredCount / limit),
         rangeText:
           filteredCount > 0
-            ? `${offset + 1}-${Math.min(offset + parseInt(limit), filteredCount)} of ${filteredCount} vehicles`
-            : "0 vehicles",
+            ? `${offset + 1}-${Math.min(offset + parseInt(limit), filteredCount)} of ${filteredCount} running ads`
+            : "0 running ads",
       },
       filterStats: aggregateData,
       data: ads || [],
@@ -429,7 +409,7 @@ o.getAllFeaturesAds = async function (req, res, next) {
     // -----------------------------
     const vehicleWhere = {};
 
-    // Helper function to parse array filters
+    // Helper to parse array filters
     const parseArrayFilter = (value) => {
       if (!value) return null;
       if (Array.isArray(value)) return value;
@@ -439,95 +419,73 @@ o.getAllFeaturesAds = async function (req, res, next) {
       return [value];
     };
 
-    // Apply filters with array support
+    // Keyword search
     if (keyword) vehicleWhere.name = { [Op.iLike]: `%${keyword}%` };
 
-    // Handle array filters - use Op.in for multiple values
+    // Array-based filters
     const cityArray = parseArrayFilter(city);
-    if (cityArray && cityArray.length > 0) {
-      vehicleWhere.city = { [Op.in]: cityArray };
-    }
+    if (cityArray?.length) vehicleWhere.city = { [Op.in]: cityArray };
 
     const provinceArray = parseArrayFilter(province);
-    if (provinceArray && provinceArray.length > 0) {
+    if (provinceArray?.length)
       vehicleWhere.province = { [Op.in]: provinceArray };
-    }
 
     const makeArray = parseArrayFilter(make);
-    if (makeArray && makeArray.length > 0) {
-      vehicleWhere.make = { [Op.in]: makeArray };
-    }
+    if (makeArray?.length) vehicleWhere.make = { [Op.in]: makeArray };
 
     const registerInArray = parseArrayFilter(registerIn);
-    if (registerInArray && registerInArray.length > 0) {
+    if (registerInArray?.length)
       vehicleWhere.registerIn = { [Op.in]: registerInArray };
-    }
 
     const transmissionArray = parseArrayFilter(transmission);
-    if (transmissionArray && transmissionArray.length > 0) {
+    if (transmissionArray?.length)
       vehicleWhere.transmission = { [Op.in]: transmissionArray };
-    }
 
     const colorArray = parseArrayFilter(color);
-    if (colorArray && colorArray.length > 0) {
-      vehicleWhere.color = { [Op.in]: colorArray };
-    }
+    if (colorArray?.length) vehicleWhere.color = { [Op.in]: colorArray };
 
     const fuelTypeArray = parseArrayFilter(fuelType);
-    if (fuelTypeArray && fuelTypeArray.length > 0) {
+    if (fuelTypeArray?.length)
       vehicleWhere.fuelType = { [Op.in]: fuelTypeArray };
-    }
 
     const assemblyInArray = parseArrayFilter(assemblyIn);
-    if (assemblyInArray && assemblyInArray.length > 0) {
+    if (assemblyInArray?.length)
       vehicleWhere.assemblyIn = { [Op.in]: assemblyInArray };
-    }
 
     const bodyTypeArray = parseArrayFilter(bodyType);
-    if (bodyTypeArray && bodyTypeArray.length > 0) {
+    if (bodyTypeArray?.length) {
       vehicleWhere.bodyType = {
         [Op.or]: bodyTypeArray.map((bt) => ({ [Op.iLike]: bt })),
       };
     }
 
     const modelCategoryArray = parseArrayFilter(modelCategory);
-    if (modelCategoryArray && modelCategoryArray.length > 0) {
+    if (modelCategoryArray?.length)
       vehicleWhere.modelCategory = { [Op.in]: modelCategoryArray };
-    }
 
     // Range filters
-    if (minPrice && maxPrice) {
+    if (minPrice && maxPrice)
       vehicleWhere.price = { [Op.between]: [minPrice, maxPrice] };
-    } else if (minPrice) {
-      vehicleWhere.price = { [Op.gte]: minPrice };
-    } else if (maxPrice) {
-      vehicleWhere.price = { [Op.lte]: maxPrice };
-    }
+    else if (minPrice) vehicleWhere.price = { [Op.gte]: minPrice };
+    else if (maxPrice) vehicleWhere.price = { [Op.lte]: maxPrice };
 
-    if (minYear && maxYear) {
+    if (minYear && maxYear)
       vehicleWhere.model = { [Op.between]: [minYear, maxYear] };
-    } else if (minYear) {
-      vehicleWhere.model = { [Op.gte]: minYear };
-    } else if (maxYear) {
-      vehicleWhere.model = { [Op.lte]: maxYear };
-    }
+    else if (minYear) vehicleWhere.model = { [Op.gte]: minYear };
+    else if (maxYear) vehicleWhere.model = { [Op.lte]: maxYear };
 
-    if (minMileage && maxMileage) {
+    if (minMileage && maxMileage)
       vehicleWhere.mileage = { [Op.between]: [minMileage, maxMileage] };
-    } else if (minMileage) {
-      vehicleWhere.mileage = { [Op.gte]: minMileage };
-    } else if (maxMileage) {
-      vehicleWhere.mileage = { [Op.lte]: maxMileage };
-    }
+    else if (minMileage) vehicleWhere.mileage = { [Op.gte]: minMileage };
+    else if (maxMileage) vehicleWhere.mileage = { [Op.lte]: maxMileage };
 
     // -----------------------------
     // DEALER FILTER
     // -----------------------------
     const dealerWhere = {};
     const dealerStatusArray = parseArrayFilter(dealerStatus);
-    if (dealerStatusArray && dealerStatusArray.length > 0) {
+    if (dealerStatusArray?.length)
       dealerWhere.status = { [Op.in]: dealerStatusArray };
-    }
 
     // -----------------------------
     // SORT ORDER
@@ -539,14 +497,16 @@ o.getAllFeaturesAds = async function (req, res, next) {
     // MAIN QUERY
     // -----------------------------
     const query = {
-      where: { adType: "featured" },
+      where: {
+        adType: "featured",
+        status: "running", // ✅ Only include running featured ads
+      },
       include: [
         {
           model: Vehicle,
           as: "vehicle",
-          where:
-            Object.keys(vehicleWhere).length > 0 ? vehicleWhere : undefined,
-          required: true, // This ensures we only get ads with matching vehicles
+          where: Object.keys(vehicleWhere).length ? vehicleWhere : undefined,
+          required: true,
         },
         {
           model: User,
@@ -566,7 +526,7 @@ o.getAllFeaturesAds = async function (req, res, next) {
                 "openingTime",
               ],
               where: Object.keys(dealerWhere).length ? dealerWhere : undefined,
-              required: dealerStatusArray && dealerStatusArray.length > 0, // Only require if filter is applied
+              required: dealerStatusArray?.length > 0,
             },
           ],
         },
@@ -574,7 +534,7 @@ o.getAllFeaturesAds = async function (req, res, next) {
       limit: parseInt(limit),
       offset,
       order,
-      distinct: true, // Important for correct count with includes
+      distinct: true,
     };
 
     // -----------------------------
@@ -589,7 +549,7 @@ o.getAllFeaturesAds = async function (req, res, next) {
     const totalVehicles = await Vehicle.count();
 
     // -----------------------------
-    // AGGREGATION COUNTS (for filters) - ONLY FOR FEATURED ADS
+    // AGGREGATION COUNTS (for filters) - ONLY FOR RUNNING FEATURED ADS
     // -----------------------------
     const aggregateAttributes = [
       "city",
@@ -614,14 +574,12 @@ o.getAllFeaturesAds = async function (req, res, next) {
             model: Advertisement,
             as: "advertisement",
             attributes: [],
-            where: { adType: "featured" },
+            where: { adType: "featured", status: "running" }, // ✅ Only count running featured ads
             required: true,
           },
         ],
         group: [col(attr)],
-        where: {
-          [attr]: { [Op.ne]: null }, // exclude nulls
-        },
+        where: { [attr]: { [Op.ne]: null } },
         raw: true,
       });
       aggregateData[attr] = rows;
@@ -634,8 +592,8 @@ o.getAllFeaturesAds = async function (req, res, next) {
       success: true,
       message:
         ads.length > 0
-          ? "Ads fetched successfully"
-          : "No ads found matching your criteria",
+          ? "Running featured ads fetched successfully"
+          : "No running featured ads found matching your criteria",
       pagination: {
         totalFiltered: filteredCount,
         totalAllVehicles: totalVehicles,
@@ -644,8 +602,8 @@ o.getAllFeaturesAds = async function (req, res, next) {
         totalPages: Math.ceil(filteredCount / limit),
         rangeText:
           filteredCount > 0
-            ? `${offset + 1}-${Math.min(offset + parseInt(limit), filteredCount)} of ${filteredCount} vehicles`
-            : "0 vehicles",
+            ? `${offset + 1}-${Math.min(offset + parseInt(limit), filteredCount)} of ${filteredCount} running featured ads`
+            : "0 running featured ads",
       },
       filterStats: aggregateData,
       data: ads || [],
@@ -672,20 +630,10 @@ o.getSimilarAds = async function (req, res, next) {
         {
           model: User,
           as: "dealer",
-          attributes: ["id", "fullname", "email", "phone", "role", "image"],
           include: [
             {
               model: Dealer,
               as: "dealer",
-              attributes: [
-                "id",
-                "location",
-                "status",
-                "image",
-                "availableCarListing",
-                "closingTime",
-                "openingTime",
-              ],
             },
           ],
         },
@@ -695,29 +643,19 @@ o.getSimilarAds = async function (req, res, next) {
     if (!ad)
       return json.errorResponse(res, "Ad not found for this vehicle", 404);
 
-    // Step 3: First find similar vehicles - let's debug this
+    // Step 3: Find vehicles with the same make & model, excluding the current one
     const similarVehicles = await Vehicle.findAll({
       where: {
-        make: { [Op.iLike]: `%${vehicle.make}%` }, // Use wildcard for partial matching
+        make: { [Op.iLike]: vehicle.make },
+        model: { [Op.iLike]: vehicle.model },
         id: { [Op.ne]: vehicle.id },
       },
-      attributes: ["id", "make", "model", "name"], // Include more fields for debugging
       limit: 10,
     });
 
     const vehicleIds = similarVehicles.map((v) => v.id);
 
-    // Step 4: Check if advertisements exist for these vehicles
-    if (vehicleIds.length > 0) {
-      // First, let's check how many ads exist for these vehicles
-      const adCount = await Advertisement.count({
-        where: {
-          vehicleId: { [Op.in]: vehicleIds },
-        },
-      });
-    }
-
-    // Step 5: Then find ads for these vehicles
+    // Step 4: Fetch ads for similar vehicles
     const similarAds =
       vehicleIds.length > 0
         ? await Advertisement.findAll({
@@ -734,20 +672,12 @@ o.getSimilarAds = async function (req, res, next) {
                 model: User,
                 as: "dealer",
                 required: false,
-                attributes: [
-                  "id",
-                  "fullname",
-                  "email",
-                  "phone",
-                  "role",
-                  "image",
-                ],
+
                 include: [
                   {
                     model: Dealer,
                     as: "dealer",
                     required: false,
-                    attributes: ["id", "location", "status", "image"],
                   },
                 ],
               },
@@ -878,5 +808,136 @@ o.registerAdClick = async function (req, res, next) {
     return json.errorResponse(res, error.message || error, 400);
   }
 };
+
+o.getDealerStats = async function (req, res, next) {
+  try {
+    const dealerId = req.decoded.id;
+
+    // Fetch all advertisements belonging to this dealer
+    const ads = await Advertisement.findAll({
+      where: { dealerId },
+      attributes: ["id", "clicks", "leads", "views", "createdAt", "updatedAt"],
+    });
+
+    if (!ads || ads.length === 0) {
+      return json.successResponse(res, {
+        totalAds: 0,
+        totalClicks: 0,
+        totalLeads: 0,
+        totalViews: 0,
+        conversionRate: 0,
+        weeklyData: generateEmptyWeeklyData(),
+      });
+    }
+
+    // Aggregate statistics
+    const totalAds = ads.length;
+    const totalClicks = ads.reduce((sum, ad) => sum + (ad.clicks || 0), 0);
+    const totalLeads = ads.reduce((sum, ad) => sum + (ad.leads || 0), 0);
+    const totalViews = ads.reduce((sum, ad) => sum + (ad.views || 0), 0);
+
+    // Calculate conversion rate
+    const conversionRate =
+      totalClicks > 0
+        ? parseFloat(((totalLeads / totalClicks) * 100).toFixed(2))
+        : 0;
+
+    // Generate last 7 days weekly data
+    const weeklyData = generateWeeklyData(ads);
+
+    // Return result
+    return json.successResponse(res, {
+      totalAds,
+      totalClicks,
+      totalLeads,
+      totalViews,
+      conversionRate,
+      weeklyData,
+    });
+  } catch (error) {
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
+
+// Helper function to generate empty weekly data
+function generateEmptyWeeklyData() {
+  const data = [];
+  for (let i = 6; i >= 0; i--) {
+    const date = new Date();
+    date.setDate(date.getDate() - i);
+    const dayName = [
+      "Sunday",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+    ][date.getDay()];
+
+    data.push({
+      date: date.toISOString().split("T")[0],
+      day: dayName.substring(0, 3).toUpperCase(),
+      clicks: 0,
+      leads: 0,
+      views: 0,
+      conversionRate: 0,
+    });
+  }
+  return data;
+}
+
+// Helper function to generate weekly data from advertisements
+function generateWeeklyData(ads) {
+  const weeklyMap = {};
+
+  // Initialize last 7 days
+  for (let i = 6; i >= 0; i--) {
+    const date = new Date();
+    date.setDate(date.getDate() - i);
+    const dateString = date.toISOString().split("T")[0];
+    const dayName = [
+      "Sunday",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+    ][date.getDay()];
+
+    weeklyMap[dateString] = {
+      date: dateString,
+      day: dayName.substring(0, 3).toUpperCase(),
+      clicks: 0,
+      leads: 0,
+      views: 0,
+      conversionRate: 0,
+    };
+  }
+
+  // Process each advertisement
+  ads.forEach((ad) => {
+    const adDate = new Date(ad.updatedAt).toISOString().split("T")[0];
+
+    // Only include if within last 7 days
+    if (weeklyMap[adDate]) {
+      weeklyMap[adDate].clicks += ad.clicks || 0;
+      weeklyMap[adDate].leads += ad.leads || 0;
+      weeklyMap[adDate].views += ad.views || 0;
+    }
+  });
+
+  // Calculate conversion rates and convert to array
+  const weeklyData = Object.values(weeklyMap).map((day) => ({
+    ...day,
+    conversionRate:
+      day.clicks > 0
+        ? parseFloat(((day.leads / day.clicks) * 100).toFixed(2))
+        : 0,
+  }));
+
+  return weeklyData;
+}
 
 module.exports = o;
