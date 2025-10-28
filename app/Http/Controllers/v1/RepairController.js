@@ -102,7 +102,7 @@ o.updateRepairProfile = async function (req, res, next) {
     // Step 3: Handle uploaded files from req.files
     if (req.files && req.files.length > 0) {
       // Construct full URLs with server address
-      const serverAddress = req.protocol + "://" + req.headers.host;
+      const serverAddress = process.env.APP_URL;
       const finalImages = [];
 
       req.files.forEach((file) => {

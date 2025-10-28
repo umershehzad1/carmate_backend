@@ -170,7 +170,7 @@ o.addVehicle = async function (req, res, next) {
     const finalImages = [];
     if (req.files && req.files.length > 0) {
       // Construct full URLs with server address
-      const serverAddress = req.protocol + "://" + req.headers.host;
+      const serverAddress = process.env.APP_URL;
       req.files.forEach((file) => {
         finalImages.push(`${serverAddress}/uploads/vehicles/${file.filename}`);
       });
@@ -338,8 +338,7 @@ o.bulkUploadVehicles = async function (req, res, next) {
               ),
               images: row.images
                 ? row.images.split("|").map((img) => {
-                    const serverAddress =
-                      req.protocol + "://" + req.headers.host;
+                    const serverAddress = process.env.APP_URL;
                     return img.startsWith("http")
                       ? img
                       : `${serverAddress}${img}`;

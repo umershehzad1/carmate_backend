@@ -188,7 +188,7 @@ o.edit = async (req, res, next) => {
     // Handle image upload
     if (req.file) {
       // Construct full URL with server address
-      const serverAddress = req.protocol + "://" + req.headers.host;
+      const serverAddress = process.env.APP_URL;
       properties.image = `${serverAddress}/uploads/user/${req.file.filename}`;
     }
 
