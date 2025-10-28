@@ -25,9 +25,10 @@ module.exports = (sequelize, DataTypes) => {
       },
 
       location: DataTypes.STRING,
-      experience: DataTypes.ARRAY(DataTypes.STRING),
+      experience: DataTypes.STRING,
       keyBenifits: DataTypes.ARRAY(DataTypes.STRING),
       speciality: DataTypes.ARRAY(DataTypes.STRING),
+      claimProcess: DataTypes.ARRAY(DataTypes.STRING),
       aboutUs: DataTypes.STRING,
       status: {
         type: DataTypes.ENUM("nonverified", "verified"),
@@ -46,16 +47,7 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.TIME,
         allowNull: true,
       },
-      analytics: {
-        type: DataTypes.JSONB,
-        allowNull: true,
-        defaultValue: {
-          quoteRequests: 0,
-          policiesSold: 0,
-          costPerLead: 0,
-          roi: 0,
-        },
-      },
+      faqs: DataTypes.ARRAY(DataTypes.JSON),
     },
     {
       sequelize,

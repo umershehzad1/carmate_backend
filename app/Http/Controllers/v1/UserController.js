@@ -417,4 +417,30 @@ o.updateRole = async function (req, res, next) {
   }
 };
 
+o.getAdminUsers = async function (req, res, next) {
+  try {
+    const { role } = req.params;
+    const users = await User.findAll({
+      where: { role },
+      include: [
+        {
+          model: Dealer,
+          as: "dealer",
+        },
+        {
+          model: Repair,
+          as: "repair",
+        },
+        {
+          model: Insurance,
+          as: "insurance",
+        },
+      ],
+    });
+    json.showAll(res, users, 200);
+  } catch (error) {
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
+
 module.exports = o;

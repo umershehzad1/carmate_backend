@@ -74,6 +74,10 @@ router
   .route("/updatepassword")
   .patch(authCtrl.authenticate, userCtrl.updatePassword);
 router.route("/googlesignup").post(userCtrl.googleSignup);
+
+router
+  .route("/getadminusers/:role")
+  .get(authCtrl.authenticate, authCtrl.isAdmin, userCtrl.getAdminUsers);
 // Upload Routes
 router
   .route("/upload")

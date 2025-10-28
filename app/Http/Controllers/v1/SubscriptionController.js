@@ -332,4 +332,76 @@ o.getUserSubscription = async function (req, res, next) {
   }
 };
 
+o.getAllSubscriptions = async function (req, res, next) {
+  try {
+    const { page = 1, limit = 10, search = "" } = req.query;
+    const { Op } = require("sequelize");
+
+    // Validate and convert to integers
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 10));
+
+    const offset = (pageNum - 1) * limitNum;
+
+    const searchWhere = search
+      ? {
+          fullname: {
+            [Op.iLike]: `%${search}%`,
+          },
+        }
+      : {};
+
+    const { count, rows } = await Subscription.findAndCountAll({
+      include: [
+        {
+          model: User,
+          as: "user",
+          where: searchWhere,
+        },
+      ],
+      limit: limitNum,
+      offset: offset,
+      order: [["createdAt", "DESC"]],
+      distinct: true,
+    });
+
+    // Calculate statistics using raw query - ALWAYS get total stats (not affected by search)
+    let statsQuery = `
+      SELECT 
+        COALESCE(SUM(CAST(REPLACE("Subscriptions"."price", '$', '') AS DECIMAL)), 0)::DECIMAL as "totalRevenue",
+        COALESCE(AVG(CAST(REPLACE("Subscriptions"."price", '$', '') AS DECIMAL)), 0)::DECIMAL as "averageOrderValue",
+        COUNT("Subscriptions"."id") as "totalOrders"
+      FROM "Subscriptions"
+    `;
+
+    const stats = await Subscription.sequelize.query(statsQuery, {
+      type: require("sequelize").QueryTypes.SELECT,
+    });
+
+    const totalPages = Math.ceil(count / limitNum);
+
+    const response = {
+      data: rows,
+      pagination: {
+        total: count,
+        currentPage: pageNum,
+        limit: limitNum,
+        totalPages: totalPages,
+        hasNextPage: pageNum < totalPages,
+        hasPreviousPage: pageNum > 1,
+      },
+      stats: {
+        totalRevenue: parseFloat(stats[0]?.totalRevenue) || 0,
+        averageOrderValue: parseFloat(stats[0]?.averageOrderValue) || 0,
+        totalOrders: parseInt(stats[0]?.totalOrders) || 0,
+      },
+    };
+
+    json.showOne(res, response, 200);
+  } catch (error) {
+    console.error("Error:", error);
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
+
 module.exports = o;

@@ -20,4 +20,12 @@ router
 router
   .route("/getusersubscription")
   .get(authCtrl.authenticate, subscriptionCtrl.getUserSubscription);
+
+router
+  .route("/getallsubs")
+  .get(
+    authCtrl.authenticate,
+    authCtrl.isAdmin,
+    subscriptionCtrl.getAllSubscriptions
+  );
 module.exports = router;
