@@ -19,33 +19,133 @@ const o = {};
 
 o.createCheckoutSession = async function (req, res, next) {
   try {
-    // 'basic' | 'pro' | 'premium'
     const { id: userId, role } = req.decoded;
     const { id } = req.params;
+
+    // ✅ Validate inputs
+    if (!userId) {
+      return json.errorResponse(res, "User ID is required", 400);
+    }
+
+    if (!id) {
+      return json.errorResponse(res, "Package ID is required", 400);
+    }
+
+    console.log(
+      `🔍 [CHECKOUT] Starting checkout for userId: ${userId}, packageId: ${id}`
+    );
+
+    // --- Fetch package details ---
+    console.log(`🔍 [CHECKOUT] Fetching package: ${id}`);
     const plan = await Package.findByPk(id);
+
+    if (!plan) {
+      console.error(`❌ [CHECKOUT] Package not found: ${id}`);
+      return json.errorResponse(res, "Package not found", 404);
+    }
+
+    console.log(`✅ [CHECKOUT] Package found:`, {
+      id: plan.id,
+      package: plan.package,
+      stripeProductId: plan.stripeProductId,
+    });
+
+    // --- Fetch Stripe product and price ---
     const productId = plan.stripeProductId;
 
+    if (!productId) {
+      console.error(`❌ [CHECKOUT] No Stripe product ID for package: ${id}`);
+      return json.errorResponse(res, "No Stripe product configured", 400);
+    }
+
+    console.log(`🔍 [CHECKOUT] Retrieving Stripe product: ${productId}`);
     const product = await stripe.products.retrieve(productId);
+    console.log(`✅ [CHECKOUT] Stripe product retrieved:`, {
+      id: product.id,
+      name: product.name,
+    });
+
+    console.log(`🔍 [CHECKOUT] Fetching prices for product: ${productId}`);
     const priceList = await stripe.prices.list({
       product: productId,
       active: true,
     });
-    const user = await User.findByPk(userId);
-    const priceId = priceList.data[0]?.id;
 
-    if (!priceId)
+    if (!priceList.data || priceList.data.length === 0) {
+      console.error(
+        `❌ [CHECKOUT] No active prices found for product: ${productId}`
+      );
       return json.errorResponse(res, "No price found for product", 400);
+    }
 
-    // ✅ Create Stripe customer if not already created
-    const customer = await stripe.customers.create({
-      email: user.email,
-      name: user.fullname || "Unknown User",
+    const priceId = priceList.data[0].id;
+    const amount = priceList.data[0].unit_amount / 100; // Convert from cents to dollars
+    console.log(`✅ [CHECKOUT] Price found:`, {
+      priceId,
+      amount: `$${amount}`,
+      currency: priceList.data[0].currency,
     });
 
-    // ✅ Create Checkout session for subscription
+    // --- Fetch user details ---
+    console.log(`🔍 [CHECKOUT] Fetching user: ${userId}`);
+    const user = await User.findByPk(userId);
+
+    if (!user) {
+      console.error(`❌ [CHECKOUT] User not found: ${userId}`);
+      return json.errorResponse(res, "User not found", 404);
+    }
+
+    console.log(`✅ [CHECKOUT] User found:`, {
+      id: user.id,
+      email: user.email,
+      fullname: user.fullname,
+    });
+
+    // --- Check if user already has a Stripe customer ---
+    console.log(
+      `🔍 [CHECKOUT] Checking for existing Stripe customer for userId: ${userId}`
+    );
+    let customerId;
+
+    // Option 1: Check if user has stripeCustomerId stored in database (if you have this field)
+    // If you don't have this field, skip this step
+    if (user.stripeCustomerId) {
+      console.log(
+        `✅ [CHECKOUT] Found existing Stripe customer: ${user.stripeCustomerId}`
+      );
+      customerId = user.stripeCustomerId;
+    } else {
+      // Option 2: Create new Stripe customer
+      console.log(`📝 [CHECKOUT] Creating new Stripe customer...`);
+      const customer = await stripe.customers.create({
+        email: user.email,
+        name: user.fullname || "Unknown User",
+        metadata: {
+          userId: String(userId),
+        },
+      });
+
+      customerId = customer.id;
+      console.log(`✅ [CHECKOUT] New Stripe customer created:`, {
+        id: customer.id,
+        email: customer.email,
+        name: customer.name,
+      });
+
+      // ✅ (Optional) Store stripeCustomerId in user record for future use
+      // Uncomment if your User model has a stripeCustomerId field
+      /*
+      user.stripeCustomerId = customerId;
+      await user.save();
+      console.log(`✅ [CHECKOUT] User updated with stripeCustomerId: ${customerId}`);
+      */
+    }
+
+    // --- Create Checkout Session ---
+    console.log(`📝 [CHECKOUT] Creating Stripe checkout session...`);
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
-      customer: customer.id,
+      customer: customerId,
       payment_method_types: ["card"],
       line_items: [
         {
@@ -53,18 +153,52 @@ o.createCheckoutSession = async function (req, res, next) {
           quantity: 1,
         },
       ],
-      success_url: "http://localhost:3000/success",
-      cancel_url: "http://localhost:3000/cancel",
+      success_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/cancel`,
+      // ✅ Store metadata on checkout session (NOW INCLUDES PACKAGE ID)
       metadata: {
-        name: user.name,
-        userId: user.id,
-        plan: plan.package,
+        userId: String(userId),
+        packageId: String(id),
+        userName: user.fullname,
+        userEmail: user.email,
       },
+      // ✅ IMPORTANT: Store metadata on subscription so it persists to invoice webhooks (NOW INCLUDES PACKAGE ID)
+      subscription_data: {
+        metadata: {
+          userId: String(userId),
+          packageId: String(id),
+          userName: user.fullname,
+          userEmail: user.email,
+        },
+      },
+      client_reference_id: String(userId),
     });
 
-    return json.showOne(res, { checkoutUrl: session.url }, 200);
+    console.log(`✅ [CHECKOUT] Checkout session created:`, {
+      id: session.id,
+      url: session.url,
+      customer: session.customer,
+      subscription: session.subscription,
+    });
+
+    console.log(
+      `🎉 [CHECKOUT] Checkout session completed successfully for userId: ${userId}`
+    );
+
+    return json.showOne(
+      res,
+      {
+        checkoutUrl: session.url,
+        sessionId: session.id,
+        customerId: customerId,
+      },
+      200
+    );
   } catch (error) {
-    console.error("Stripe Subscription Error:", error);
+    console.error("❌ Stripe Subscription Error:", error);
+    console.error("❌ Error Message:", error.message);
+    console.error("❌ Error Details:", error);
+
     return json.errorResponse(
       res,
       error.message || "Something went wrong",
@@ -80,25 +214,101 @@ o.handleCheckoutSessionCompleted = async (session) => {
       JSON.stringify(session, null, 2)
     );
 
-    let { userId, plan } = session.metadata;
+    let userId, packageId;
+    let stripeSub;
+    let subscriptionId;
 
-    // ✅ Convert userId to integer
-    userId = parseInt(userId, 10);
+    // ✅ Detect object type and extract metadata accordingly
+    if (session.object === "invoice") {
+      console.log("📌 [WEBHOOK] Processing Invoice object");
 
-    console.log(
-      `📍 [WEBHOOK] Extracted metadata - userId: ${userId}, plan: ${plan}`
-    );
+      // For invoices, subscription ID is in parent.subscription_details.subscription
+      subscriptionId = session.parent?.subscription_details?.subscription;
 
-    if (!userId || !plan) {
-      console.error("❌ [WEBHOOK] Missing userId or plan in metadata");
-      throw new Error(`Missing userId (${userId}) or plan (${plan})`);
+      if (!subscriptionId) {
+        console.error(
+          "❌ [WEBHOOK] No subscription ID found in invoice parent"
+        );
+        throw new Error("No subscription ID found in invoice");
+      }
+
+      console.log(
+        `🔍 [WEBHOOK] Retrieved subscription ID from invoice: ${subscriptionId}`
+      );
+
+      // Retrieve the subscription from the invoice
+      stripeSub = await stripe.subscriptions.retrieve(subscriptionId);
+      console.log("🔍 [WEBHOOK] Retrieved subscription from invoice");
+
+      // Get metadata from subscription
+      ({ userId, packageId } = stripeSub.metadata || {});
+      console.log(
+        `📍 [WEBHOOK] Extracted metadata from subscription - userId: ${userId}, packageId: ${packageId}`
+      );
+    } else if (session.object === "checkout.session") {
+      console.log("📌 [WEBHOOK] Processing Checkout Session object");
+
+      // For checkout sessions, subscription ID is directly in session
+      subscriptionId = session.subscription;
+
+      if (!subscriptionId) {
+        console.error(
+          "❌ [WEBHOOK] No subscription ID found in checkout session"
+        );
+        throw new Error("No subscription ID found in checkout session");
+      }
+
+      console.log(
+        `🔍 [WEBHOOK] Retrieved subscription ID from checkout session: ${subscriptionId}`
+      );
+
+      // Get metadata directly from checkout session
+      ({ userId, packageId } = session.metadata || {});
+      console.log(
+        `📍 [WEBHOOK] Extracted metadata from checkout session - userId: ${userId}, packageId: ${packageId}`
+      );
+
+      // Retrieve subscription for Stripe details
+      stripeSub = await stripe.subscriptions.retrieve(subscriptionId);
+      console.log("🔍 [WEBHOOK] Retrieved subscription from checkout session");
+    } else {
+      console.error(`❌ [WEBHOOK] Unknown object type: ${session.object}`);
+      throw new Error(`Unknown webhook object type: ${session.object}`);
     }
 
-    // --- Retrieve Stripe subscription details ---
+    // ✅ Convert userId and packageId to integers
+    userId = parseInt(userId, 10);
+    packageId = parseInt(packageId, 10);
+
     console.log(
-      `🔄 [WEBHOOK] Retrieving Stripe subscription: ${session.subscription}`
+      `📍 [WEBHOOK] Final extracted metadata - userId: ${userId}, packageId: ${packageId}`
     );
-    const stripeSub = await stripe.subscriptions.retrieve(session.subscription);
+
+    if (!userId || !packageId || isNaN(userId) || isNaN(packageId)) {
+      console.error("❌ [WEBHOOK] Missing userId or packageId in metadata");
+      throw new Error(`Missing userId (${userId}) or packageId (${packageId})`);
+    }
+
+    console.log(
+      `✅ [WEBHOOK] Metadata validation passed - userId: ${userId}, packageId: ${packageId}`
+    );
+
+    // --- Retrieve package using packageId (NOT plan name) ---
+    console.log(`🔍 [WEBHOOK] Retrieving package with ID: ${packageId}...`);
+    const packageData = await Package.findByPk(packageId);
+    if (!packageData) {
+      console.error(`❌ [WEBHOOK] Package ${packageId} not found`);
+      throw new Error("Package not found");
+    }
+    console.log(`✅ [WEBHOOK] Package found:`, {
+      id: packageData.id,
+      package: packageData.package,
+      packageCategory: packageData.packageCategory,
+      vehicleCount: packageData.vehicleCount,
+    });
+
+    // --- Retrieve Stripe subscription details ---
+    console.log(`🔄 [WEBHOOK] Using Stripe subscription: ${stripeSub.id}`);
     console.log(`✅ [WEBHOOK] Stripe subscription retrieved:`, {
       id: stripeSub.id,
       customer: stripeSub.customer,
@@ -141,7 +351,8 @@ o.handleCheckoutSessionCompleted = async (session) => {
     }
     console.log(`✅ [WEBHOOK] Final expiryDate: ${expiryDate.toISOString()}`);
 
-    const price = stripeSub.items.data[0].price.unit_amount / 100;
+    // Extract price from subscription items
+    const price = stripeSub.items.data[0]?.price?.unit_amount / 100 || 0;
     console.log(`💰 [WEBHOOK] Price: $${price}`);
 
     // --- ALWAYS CREATE NEW SUBSCRIPTION ---
@@ -151,7 +362,8 @@ o.handleCheckoutSessionCompleted = async (session) => {
 
     const subscriptionData = {
       userId: parseInt(userId, 10),
-      plan: String(plan).trim(),
+      packageId: parseInt(packageId, 10),
+      plan: String(packageData.package).trim(),
       price: `$${price}`,
       expiryDate:
         expiryDate instanceof Date ? expiryDate : new Date(expiryDate),
@@ -170,6 +382,7 @@ o.handleCheckoutSessionCompleted = async (session) => {
       console.log(`✅ [WEBHOOK] New subscription created:`, {
         id: newSub.id,
         userId: newSub.userId,
+        packageId: newSub.packageId,
         plan: newSub.plan,
         price: newSub.price,
         expiryDate: newSub.expiryDate?.toISOString?.(),
@@ -186,7 +399,7 @@ o.handleCheckoutSessionCompleted = async (session) => {
       throw createErr;
     }
 
-    // --- Retrieve user and package ---
+    // --- Retrieve user ---
     console.log(`🔍 [WEBHOOK] Retrieving user ${userId}...`);
     const user = await User.findByPk(userId);
     if (!user) {
@@ -198,19 +411,6 @@ o.handleCheckoutSessionCompleted = async (session) => {
       email: user.email,
       fullname: user.fullname,
       currentRole: user.role,
-    });
-
-    console.log(`🔍 [WEBHOOK] Retrieving package with name: ${plan}...`);
-    const packageData = await Package.findOne({ where: { package: plan } });
-    if (!packageData) {
-      console.error(`❌ [WEBHOOK] Package ${plan} not found`);
-      throw new Error("Package not found");
-    }
-    console.log(`✅ [WEBHOOK] Package found:`, {
-      id: packageData.id,
-      package: packageData.package,
-      packageCategory: packageData.packageCategory,
-      vehicleCount: packageData.vehicleCount,
     });
 
     const newRole = packageData.packageCategory;
@@ -385,14 +585,13 @@ o.handleCheckoutSessionCompleted = async (session) => {
     }
 
     console.log(
-      `🎉 [WEBHOOK] Checkout session completed successfully for user ${userId}`
+      `🎉 [WEBHOOK] Webhook processing completed successfully for user ${userId}`
     );
   } catch (error) {
-    console.error(
-      "❌ [WEBHOOK] Checkout session handling error:",
-      error.message
-    );
+    console.error("❌ [WEBHOOK] Webhook processing error:", error.message);
     console.error("❌ [WEBHOOK] Error details:", error);
+    // Re-throw to prevent false success responses
+    throw error;
   }
 };
 
@@ -512,7 +711,16 @@ o.cancelSubscription = async function (req, res, next) {
       }
     }
 
+    // Delete subscription
     await subscription.destroy();
+
+    // Update user role from dealer to user
+    await User.update({ role: "user" }, { where: { id: user.id } });
+
+    // Delete dealer record where dealerId is userId
+    await Dealer.destroy({
+      where: { userId: user.id },
+    });
 
     return json.successResponse(
       res,
