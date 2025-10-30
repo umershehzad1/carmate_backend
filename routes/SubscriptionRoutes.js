@@ -8,7 +8,7 @@ const subscriptionCtrl = require("../app/Http/Controllers/v1/SubscriptionControl
 const authCtrl = require("../app/Http/Controllers/v1/AuthController");
 
 router.post(
-  "/create",
+  "/create/:id",
 
   authCtrl.authenticate,
   subscriptionCtrl.createCheckoutSession
@@ -28,4 +28,8 @@ router
     authCtrl.isAdmin,
     subscriptionCtrl.getAllSubscriptions
   );
+
+router
+  .route("/getActiveSubsction")
+  .get(authCtrl.authenticate, subscriptionCtrl.checkActiveSubscription);
 module.exports = router;

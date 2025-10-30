@@ -9,6 +9,8 @@ const http = require("http");
 const path = require("path");
 const { Server } = require("socket.io");
 const cors = require("cors");
+
+// ✅ Import all routes
 const userRoutes = require("./routes/UserRoutes");
 const vehicleRoutes = require("./routes/VehicleRoutes");
 const testDriveRequestRoutes = require("./routes/TestDriveRequestsRoutes");
@@ -23,27 +25,36 @@ const subscriptionRoutes = require("./routes/SubscriptionRoutes");
 const conversationRoutes = require("./routes/ConversationRoutes");
 const messageRoutes = require("./routes/MessageRoutes");
 const reviewRoutes = require("./routes/ReviewRoutes");
-
-// Notifications & Messaging routes
+const packageRoutes = require("./routes/PackageRoutes");
 const notificationsRoutes = require("./routes/NotificationRoutes");
+const stripeWebhookRoutes = require("./routes/StripeWebhook"); // ✅ Add this
 
 const app = express();
+
+// ✅ 1. CORS first
 app.use(
   cors({
-    origin: "*", // your frontend origin
-    credentials: true, // allow cookies or auth headers
+    origin: "*",
+    credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization", "x-access-token"],
   })
 );
 
-app.use("/api/stripe", require("./routes/StripeWebhook"));
+// ✅ 2. WEBHOOK FIRST (needs raw body, before JSON parser)
+app.use("/api/stripe", stripeWebhookRoutes);
+
+// ✅ 3. BODY PARSERS (JSON, URL-encoded)
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-require("./cronjobs/clearOldNotifications");
-// API Routes
+
+// ✅ 4. Static files
 app.use(express.static(path.join(__dirname, "public")));
 
+// ✅ 5. CronJobs
+require("./cronjobs/clearOldNotifications");
+
+// ✅ 6. ALL OTHER ROUTES
 app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/vehicle", vehicleRoutes);
 app.use("/api/v1/testdriverequest", testDriveRequestRoutes);
@@ -56,12 +67,12 @@ app.use("/api/v1/insurance", insuranceRoutes);
 app.use("/api/v1/advertisement", advertisementRoutes);
 app.use("/api/v1/subscriptions", subscriptionRoutes);
 app.use("/api/v1/review", reviewRoutes);
-
-// Notifications & Messaging Routes
+app.use("/api/v1/package", packageRoutes);
 app.use("/api/v1/notifications", notificationsRoutes);
 app.use("/api/v1/conversation", conversationRoutes);
 app.use("/api/v1/message", messageRoutes);
-// HTTP Server & Socket.io Setup
+
+// ✅ HTTP Server & Socket.io Setup
 const server = http.createServer(app);
 
 global.io = new Server(server, {
@@ -72,13 +83,11 @@ global.io = new Server(server, {
 global.io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
-  // Join user's personal room for notifications
   socket.on("join_room", (userId) => {
     socket.join(`user_${userId}`);
     console.log(`User ${userId} joined user_${userId}`);
   });
 
-  // Disconnect
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
   });
@@ -89,7 +98,7 @@ server.listen(port, () => {
   console.log("Socket is running on port " + port);
 });
 
-// Error handling (attach to server, not app)
+// Error handling
 server.on("error", (error) => {
   if (error.syscall !== "listen") throw error;
   const bind = typeof port === "string" ? "Pipe " + port : "Port " + port;

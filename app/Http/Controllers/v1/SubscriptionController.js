@@ -10,60 +10,27 @@ const stripe = require("../../../../config/Stripe");
 const Subscription = db.Subscription;
 const Vehicle = db.Vehicle;
 const User = db.User;
-// Sequential field validation function
-function validateRequiredFieldsSequentially(body, requiredFields) {
-  for (const field of requiredFields) {
-    const value = body[field];
-    if (!value || (typeof value === "string" && value.trim() === "")) {
-      throw new Error(`Field "${field}" is required`);
-    }
-  }
-}
+const Package = db.Package;
+const Dealer = db.Dealer;
+const Repair = db.Repair;
+const Insurance = db.Insurance;
 
 const o = {};
 
 o.createCheckoutSession = async function (req, res, next) {
   try {
-    console.log("body request", req.body);
-    const { plan } = req.body; // 'basic' | 'pro' | 'premium'
+    // 'basic' | 'pro' | 'premium'
     const { id: userId, role } = req.decoded;
+    const { id } = req.params;
+    const plan = await Package.findByPk(id);
+    const productId = plan.stripeProductId;
 
-    // Validate input
-
-    if (!plan) return json.errorResponse(res, "Plan is required", 400);
-
-    const user = await User.findByPk(userId);
-    if (!user) return json.errorResponse(res, "User not found", 404);
-
-    // 🔹 Map each role to its available Stripe product IDs
-    const planMap = {
-      dealer: {
-        basic: "prod_TEzBX5cQyRu5hH",
-        pro: "prod_TEzBgTSE0Aq19O",
-        premium: "prod_TEzCILRwLvmkip",
-      },
-      repair: {
-        pro: "prod_TEzDsucDCJIf4S",
-        premium: "prod_TEzD6bmLXzkrCf",
-      },
-      insurance: {
-        pro: "prod_TEzElDwxHBTDnV",
-        premium: "prod_TEzFBICI4C017R",
-      },
-    };
-
-    // Validate role and plan combination
-    const productId = planMap[role]?.[plan];
-    if (!productId) {
-      return json.errorResponse(res, `Invalid plan for role: ${role}`, 400);
-    }
-
-    // ✅ Get price from product (optional; for testing, use hardcoded amount)
     const product = await stripe.products.retrieve(productId);
     const priceList = await stripe.prices.list({
       product: productId,
       active: true,
     });
+    const user = await User.findByPk(userId);
     const priceId = priceList.data[0]?.id;
 
     if (!priceId)
@@ -89,9 +56,9 @@ o.createCheckoutSession = async function (req, res, next) {
       success_url: "http://localhost:3000/success",
       cancel_url: "http://localhost:3000/cancel",
       metadata: {
-        userId,
-        role,
-        plan,
+        name: user.name,
+        userId: user.id,
+        plan: plan.package,
       },
     });
 
@@ -108,74 +75,324 @@ o.createCheckoutSession = async function (req, res, next) {
 
 o.handleCheckoutSessionCompleted = async (session) => {
   try {
-    const { userId, plan } = session.metadata;
+    console.log(
+      "🔍 [WEBHOOK] Session received:",
+      JSON.stringify(session, null, 2)
+    );
 
-    // Retrieve Stripe subscription details
+    let { userId, plan } = session.metadata;
+
+    // ✅ Convert userId to integer
+    userId = parseInt(userId, 10);
+
+    console.log(
+      `📍 [WEBHOOK] Extracted metadata - userId: ${userId}, plan: ${plan}`
+    );
+
+    if (!userId || !plan) {
+      console.error("❌ [WEBHOOK] Missing userId or plan in metadata");
+      throw new Error(`Missing userId (${userId}) or plan (${plan})`);
+    }
+
+    // --- Retrieve Stripe subscription details ---
+    console.log(
+      `🔄 [WEBHOOK] Retrieving Stripe subscription: ${session.subscription}`
+    );
     const stripeSub = await stripe.subscriptions.retrieve(session.subscription);
+    console.log(`✅ [WEBHOOK] Stripe subscription retrieved:`, {
+      id: stripeSub.id,
+      customer: stripeSub.customer,
+      current_period_end: stripeSub.current_period_end,
+      status: stripeSub.status,
+    });
 
     // --- Compute expiry date ---
     let expiryDate;
+    console.log(`🕐 [WEBHOOK] Computing expiry date...`);
     if (stripeSub.current_period_end) {
       expiryDate = new Date(stripeSub.current_period_end * 1000);
+      console.log(
+        `📅 [WEBHOOK] Using current_period_end: ${expiryDate.toISOString()}`
+      );
     } else if (stripeSub.start_date) {
       expiryDate = new Date(stripeSub.start_date * 1000);
-      if (stripeSub.plan?.interval === "month")
+      console.log(`📅 [WEBHOOK] Using start_date: ${expiryDate.toISOString()}`);
+      if (stripeSub.plan?.interval === "month") {
         expiryDate.setMonth(expiryDate.getMonth() + 1);
-      else if (stripeSub.plan?.interval === "year")
+        console.log(`📅 [WEBHOOK] Added 1 month: ${expiryDate.toISOString()}`);
+      } else if (stripeSub.plan?.interval === "year") {
         expiryDate.setFullYear(expiryDate.getFullYear() + 1);
-      else expiryDate.setDate(expiryDate.getDate() + 30);
+        console.log(`📅 [WEBHOOK] Added 1 year: ${expiryDate.toISOString()}`);
+      } else {
+        expiryDate.setDate(expiryDate.getDate() + 30);
+        console.log(`📅 [WEBHOOK] Added 30 days: ${expiryDate.toISOString()}`);
+      }
     } else {
       expiryDate = new Date();
       expiryDate.setMonth(expiryDate.getMonth() + 1);
+      console.log(
+        `📅 [WEBHOOK] Default fallback (now + 1 month): ${expiryDate.toISOString()}`
+      );
     }
 
     if (isNaN(expiryDate.getTime())) {
+      console.error("❌ [WEBHOOK] Invalid expiryDate:", expiryDate);
       throw new Error("Invalid expiryDate value");
     }
+    console.log(`✅ [WEBHOOK] Final expiryDate: ${expiryDate.toISOString()}`);
 
     const price = stripeSub.items.data[0].price.unit_amount / 100;
+    console.log(`💰 [WEBHOOK] Price: $${price}`);
 
-    // --- Check if the user already has a subscription ---
-    const existingSub = await Subscription.findOne({ where: { userId } });
+    // --- ALWAYS CREATE NEW SUBSCRIPTION ---
+    console.log(
+      `📝 [WEBHOOK] Creating new subscription for userId: ${userId}...`
+    );
 
-    if (existingSub) {
-      // If same plan: extend expiry date
-      // If different plan: upgrade immediately and reset expiry
-      if (existingSub.plan === plan) {
-        // Extend expiry by adding the new duration
-        const currentExpiry = new Date(existingSub.expiryDate || new Date());
-        if (currentExpiry > new Date()) {
-          // Still active → extend from current expiry
-          currentExpiry.setMonth(currentExpiry.getMonth() + 1);
-          expiryDate = currentExpiry;
+    const subscriptionData = {
+      userId: parseInt(userId, 10),
+      plan: String(plan).trim(),
+      price: `$${price}`,
+      expiryDate:
+        expiryDate instanceof Date ? expiryDate : new Date(expiryDate),
+      stripeSubscriptionId: String(stripeSub.id).trim(),
+      stripeCustomerId: String(stripeSub.customer).trim(),
+    };
+
+    console.log(`📝 [WEBHOOK] Subscription data:`, subscriptionData);
+
+    try {
+      const newSub = await Subscription.create(subscriptionData, {
+        validate: false,
+        logging: (sql) => console.log(`📝 [SQL]: ${sql}`),
+      });
+
+      console.log(`✅ [WEBHOOK] New subscription created:`, {
+        id: newSub.id,
+        userId: newSub.userId,
+        plan: newSub.plan,
+        price: newSub.price,
+        expiryDate: newSub.expiryDate?.toISOString?.(),
+        stripeSubscriptionId: newSub.stripeSubscriptionId,
+        stripeCustomerId: newSub.stripeCustomerId,
+      });
+    } catch (createErr) {
+      console.error("❌ [WEBHOOK] Subscription creation failed");
+      console.error("❌ Error message:", createErr.message);
+      if (createErr.errors) {
+        console.error("❌ Validation errors:", createErr.errors);
+      }
+      console.error("❌ Full error:", createErr);
+      throw createErr;
+    }
+
+    // --- Retrieve user and package ---
+    console.log(`🔍 [WEBHOOK] Retrieving user ${userId}...`);
+    const user = await User.findByPk(userId);
+    if (!user) {
+      console.error(`❌ [WEBHOOK] User ${userId} not found`);
+      throw new Error("User not found");
+    }
+    console.log(`✅ [WEBHOOK] User found:`, {
+      id: user.id,
+      email: user.email,
+      fullname: user.fullname,
+      currentRole: user.role,
+    });
+
+    console.log(`🔍 [WEBHOOK] Retrieving package with name: ${plan}...`);
+    const packageData = await Package.findOne({ where: { package: plan } });
+    if (!packageData) {
+      console.error(`❌ [WEBHOOK] Package ${plan} not found`);
+      throw new Error("Package not found");
+    }
+    console.log(`✅ [WEBHOOK] Package found:`, {
+      id: packageData.id,
+      package: packageData.package,
+      packageCategory: packageData.packageCategory,
+      vehicleCount: packageData.vehicleCount,
+    });
+
+    const newRole = packageData.packageCategory;
+    console.log(`🎯 [WEBHOOK] New role from package: ${newRole}`);
+
+    // --- Update user role based on package ---
+    if (newRole && user.role !== newRole) {
+      console.log(
+        `🔄 [WEBHOOK] Role change detected: ${user.role} → ${newRole}`
+      );
+      user.role = newRole;
+      await user.save();
+      console.log(`✅ [WEBHOOK] User role updated in database`);
+
+      // Create corresponding role-specific record if not existing
+      if (newRole === "dealer") {
+        console.log(
+          `🔍 [WEBHOOK] Checking for existing Dealer record for userId: ${userId}`
+        );
+        const existingDealer = await Dealer.findOne({ where: { userId } });
+        if (!existingDealer) {
+          console.log(`📝 [WEBHOOK] Creating new Dealer record...`);
+          const slug = user.fullname
+            .toLowerCase()
+            .replace(/ /g, "-")
+            .replace(/[^\w-]+/g, "");
+          const newDealer = await Dealer.create({
+            userId,
+            location: user.city || null,
+            status: "nonverified",
+            slug: slug,
+            availableCarListing: packageData.vehicleCount || 0,
+          });
+          console.log(`✅ [WEBHOOK] Dealer record created:`, {
+            id: newDealer.id,
+            userId: newDealer.userId,
+            slug: newDealer.slug,
+            status: newDealer.status,
+            availableCarListing: newDealer.availableCarListing,
+          });
+        } else {
+          console.log(
+            `ℹ️ [WEBHOOK] Dealer record already exists for userId: ${userId}`
+          );
+        }
+      } else if (newRole === "repair") {
+        console.log(
+          `🔍 [WEBHOOK] Checking for existing Repair record for userId: ${userId}`
+        );
+        const existingRepair = await Repair.findOne({ where: { userId } });
+        if (!existingRepair) {
+          console.log(`📝 [WEBHOOK] Creating new Repair record...`);
+          const slug = user.fullname
+            .toLowerCase()
+            .replace(/ /g, "-")
+            .replace(/[^\w-]+/g, "");
+          const newRepair = await Repair.create({
+            userId,
+            location: user.city || null,
+            status: "nonverified",
+            slug: slug,
+          });
+          console.log(`✅ [WEBHOOK] Repair record created:`, {
+            id: newRepair.id,
+            userId: newRepair.userId,
+            slug: newRepair.slug,
+            status: newRepair.status,
+          });
+        } else {
+          console.log(
+            `ℹ️ [WEBHOOK] Repair record already exists for userId: ${userId}`
+          );
+        }
+      } else if (newRole === "insurance") {
+        console.log(
+          `🔍 [WEBHOOK] Checking for existing Insurance record for userId: ${userId}`
+        );
+        const existingInsurance = await Insurance.findOne({
+          where: { userId },
+        });
+        if (!existingInsurance) {
+          console.log(`📝 [WEBHOOK] Creating new Insurance record...`);
+          const slug = user.fullname
+            .toLowerCase()
+            .replace(/ /g, "-")
+            .replace(/[^\w-]+/g, "");
+          const newInsurance = await Insurance.create({
+            userId,
+            location: user.city || null,
+            status: "nonverified",
+            slug: slug,
+          });
+          console.log(`✅ [WEBHOOK] Insurance record created:`, {
+            id: newInsurance.id,
+            userId: newInsurance.userId,
+            slug: newInsurance.slug,
+            status: newInsurance.status,
+          });
+        } else {
+          console.log(
+            `ℹ️ [WEBHOOK] Insurance record already exists for userId: ${userId}`
+          );
         }
       }
 
-      await existingSub.update({
-        plan,
-        price: `CA$${price}`,
-        expiryDate,
-      });
-
-      console.log(`🔁 Subscription updated`);
+      console.log(`✅ [WEBHOOK] User role updated to '${newRole}'`);
     } else {
-      // New subscription
-      await Subscription.create({
-        userId,
-        plan,
-        price: `$${price}`,
-        expiryDate,
-        stripeSubscriptionId: stripeSub.id,
-        stripeCustomerId: stripeSub.customer,
-      });
-
-      console.log(`✅ New subscription created for user ${userId} (${plan})`);
+      console.log(
+        `ℹ️ [WEBHOOK] User role unchanged (already ${user.role}) or newRole is invalid`
+      );
     }
 
-    // Optional: mark user as active in User model
-    await User.update({ subscriptionActive: true }, { where: { id: userId } });
+    // --- Update role-specific records after role assignment ---
+    console.log(
+      `🔄 [WEBHOOK] Updating role-specific records for role: ${user.role}`
+    );
+
+    if (user.role === "dealer") {
+      console.log(`📝 [WEBHOOK] Updating Dealer record...`);
+
+      // ✅ Check if dealer already exists to increment or set
+      const existingDealer = await Dealer.findOne({ where: { userId } });
+      let newAvailableCarListing = packageData.vehicleCount || 0;
+
+      if (existingDealer && existingDealer.availableCarListing) {
+        console.log(
+          `📝 [WEBHOOK] Dealer exists with ${existingDealer.availableCarListing} available listings`
+        );
+        console.log(
+          `📝 [WEBHOOK] Adding ${packageData.vehicleCount} from new package`
+        );
+        newAvailableCarListing =
+          existingDealer.availableCarListing + (packageData.vehicleCount || 0);
+        console.log(
+          `📝 [WEBHOOK] New total availableCarListing: ${newAvailableCarListing}`
+        );
+      }
+
+      const updateResult = await Dealer.update(
+        {
+          availableCarListing: newAvailableCarListing,
+          status: "verified",
+        },
+        { where: { userId } }
+      );
+      console.log(
+        `✅ [WEBHOOK] Dealer ${userId} updated - affected rows: ${updateResult[0]}`
+      );
+      console.log(
+        `✅ [WEBHOOK] Dealer ${userId} verified with ${newAvailableCarListing} total available listings`
+      );
+    } else if (user.role === "repair") {
+      console.log(`📝 [WEBHOOK] Updating Repair record...`);
+      const updateResult = await Repair.update(
+        { status: "verified" },
+        { where: { userId } }
+      );
+      console.log(
+        `✅ [WEBHOOK] Repair user ${userId} updated - affected rows: ${updateResult[0]}`
+      );
+      console.log(`✅ [WEBHOOK] Repair user ${userId} verified`);
+    } else if (user.role === "insurance") {
+      console.log(`📝 [WEBHOOK] Updating Insurance record...`);
+      const updateResult = await Insurance.update(
+        { status: "verified" },
+        { where: { userId } }
+      );
+      console.log(
+        `✅ [WEBHOOK] Insurance user ${userId} updated - affected rows: ${updateResult[0]}`
+      );
+      console.log(`✅ [WEBHOOK] Insurance user ${userId} verified`);
+    }
+
+    console.log(
+      `🎉 [WEBHOOK] Checkout session completed successfully for user ${userId}`
+    );
   } catch (error) {
-    return json.errorResponse(res, error.message, 400);
+    console.error(
+      "❌ [WEBHOOK] Checkout session handling error:",
+      error.message
+    );
+    console.error("❌ [WEBHOOK] Error details:", error);
   }
 };
 
@@ -400,6 +617,44 @@ o.getAllSubscriptions = async function (req, res, next) {
     json.showOne(res, response, 200);
   } catch (error) {
     console.error("Error:", error);
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
+
+o.checkActiveSubscription = async function (req, res, next) {
+  try {
+    const userId = req.decoded.id;
+
+    if (!userId) {
+      throw new Error("userId is required");
+    }
+
+    const subscription = await Subscription.findOne({
+      where: { userId },
+      order: [["createdAt", "DESC"]],
+      include: [
+        {
+          model: db.User,
+          as: "user",
+        },
+      ],
+    });
+
+    if (!subscription) {
+      return json.errorResponse(res, "No subscription found", 404);
+    }
+
+    // Check if subscription is still active
+    const isActive = new Date(subscription.expiryDate) > new Date();
+
+    const response = {
+      subscription,
+      isActive,
+      status: isActive ? "ACTIVE" : "EXPIRED",
+    };
+
+    return json.showOne(res, response, 200);
+  } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }
 };

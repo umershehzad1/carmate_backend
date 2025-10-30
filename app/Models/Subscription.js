@@ -17,15 +17,15 @@ module.exports = (sequelize, DataTypes) => {
       userId: {
         type: DataTypes.INTEGER,
         allowNull: false,
-        unique: true,
         references: {
           model: "Users",
           key: "id",
         },
         onDelete: "CASCADE",
       },
+
       plan: {
-        type: DataTypes.ENUM("basic", "pro", "premium"),
+        type: DataTypes.STRING,
         allowNull: false,
       },
       price: {
