@@ -55,6 +55,7 @@ router
     userCtrl.edit
   );
 
+router.route("/getuser/:id").get(userCtrl.getUserById);
 router.route("/signup").post(userReq.signup, userReq.validate, userCtrl.signup);
 
 router.route("/login").post(userReq.signin, userReq.validate, userCtrl.login);

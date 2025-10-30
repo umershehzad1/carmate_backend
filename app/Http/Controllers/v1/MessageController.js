@@ -3,6 +3,7 @@
 const json = require("../../../Traits/ApiResponser");
 const db = require("../../../Models/index");
 const { Op } = require("sequelize");
+const createAndEmitNotification = require("../../../Traits/CreateAndEmitNotification");
 const Message = db.Message;
 const Conversation = db.Conversation;
 const Notification = db.Notifications;
@@ -25,7 +26,7 @@ const o = {};
  * - Emits socket event
  * - Creates notification
  */
-o.sendMessage = async function (req, res, next) {
+o.sendMessage = async function (req, res, io) {
   try {
     const { senderId, receiverId, content } = req.body;
 
@@ -69,19 +70,15 @@ o.sendMessage = async function (req, res, next) {
     });
 
     // Create a notification for the receiver
-    const notification = await Notification.create({
-      userId: receiverId,
-      type: "message",
-      messageId: message.id,
-      content: `New message from ${sender.name || "User " + sender.id}`,
-    });
-
-    // Emit real-time events via socket.io
-    if (global.io) {
-      global.io.to(`user_${receiverId}`).emit("new_message", message);
-      global.io.to(`user_${receiverId}`).emit("new_notification", notification);
-    }
-
+    await createAndEmitNotification(
+      {
+        senderId: senderId,
+        receiverId: receiverId,
+        type: "message",
+        content: `${sender.fullname} send you a message.`,
+      },
+      io
+    );
     return json.successResponse(
       res,
       {
@@ -122,19 +119,18 @@ o.getMessagesByConversation = async function (req, res, next) {
  */
 o.markAsRead = async function (req, res, next) {
   try {
-    const { id } = req.params;
-    const message = await Message.findByPk(id);
+    const { id } = req.params; // conversationId
+    const userId = req.decoded.id; // from auth middleware
 
-    if (!message) return json.errorResponse(res, "Message not found", 404);
+    const [updatedCount] = await Message.update(
+      { isRead: true },
+      { where: { conversationId: id, receiverId: userId }, silent: true }
+    );
 
-    message.isRead = true;
-    await message.save();
+    if (updatedCount === 0)
+      return json.errorResponse(res, "No messages found to update", 404);
 
-    if (global.io) {
-      global.io.to(`user_${message.senderId}`).emit("message_read", message);
-    }
-
-    return json.successResponse(res, "Message marked as read", 200);
+    return json.successResponse(res, "Messages marked as read", 200);
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }

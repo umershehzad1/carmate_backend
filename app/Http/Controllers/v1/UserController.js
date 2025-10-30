@@ -443,4 +443,13 @@ o.getAdminUsers = async function (req, res, next) {
   }
 };
 
+o.getUserById = async function (req, res, next) {
+  try {
+    const { id } = req.params;
+    const user = await User.findByPk(id);
+    json.showOne(res, user, 200);
+  } catch (error) {
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
 module.exports = o;

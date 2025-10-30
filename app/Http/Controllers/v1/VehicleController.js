@@ -448,19 +448,10 @@ o.getVehicleDetails = async function (req, res, next) {
         {
           model: User,
           as: "user", // must match Vehicle.belongsTo alias
-          attributes: ["fullname", "email", "phone", "image"],
           include: [
             {
               model: Dealer,
               as: "dealer", // matches User.hasOne alias
-              attributes: [
-                "id",
-                "location",
-                "status",
-                "image",
-                "closingTime",
-                "openingTime",
-              ],
             },
           ],
         },

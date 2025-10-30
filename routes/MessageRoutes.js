@@ -4,13 +4,15 @@ const express = require("express");
 const router = express.Router();
 const MessageController = require("../app/Http/Controllers/v1/MessageController");
 const { authenticate } = require("../app/Http/Controllers/v1/AuthController");
-
+const authCtrl = require("../app/Http/Controllers/v1/AuthController");
 // -------------------------------------
 // Message Routes
 // -------------------------------------
 
 // Send a new message (auto-creates conversation if not exists)
-router.post("/send", authenticate, MessageController.sendMessage);
+router.post("/send", authenticate, (req, res) =>
+  MessageController.sendMessage(req, res, global.io)
+);
 
 // Get all messages in a specific conversation
 router.get(
@@ -20,7 +22,7 @@ router.get(
 );
 
 // Mark a specific message as read
-router.put("/read/:id", authenticate, MessageController.markAsRead);
+router.put("/read/:id", authCtrl.authenticate, MessageController.markAsRead);
 
 // Delete a specific message
 router.delete("/:id", authenticate, MessageController.deleteMessage);
