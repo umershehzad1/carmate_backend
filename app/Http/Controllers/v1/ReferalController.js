@@ -49,7 +49,7 @@ o.createReferral = async function (req, res, next) {
       {
         senderId: id,
         receiverId: assignedToId,
-        type: "test_drive",
+        type: "referral",
         content: `${user.fullname} requested a ${jobCategory} for ${vehicleName}`,
         referralId: referral.id,
       },

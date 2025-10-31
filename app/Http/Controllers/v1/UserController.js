@@ -5,7 +5,7 @@ const User = db.User;
 const Dealer = db.Dealer;
 const Repair = db.Repair;
 const Insurance = db.Insurance;
-
+const Wallet = db.Wallet;
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
@@ -157,6 +157,10 @@ o.me = async (req, res, next) => {
         {
           model: Insurance,
           as: "insurance",
+        },
+        {
+          model: Wallet,
+          as: "wallet",
         },
         // {
         //   model: Subscription,

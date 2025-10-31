@@ -472,12 +472,8 @@ o.updateVehicle = async function (req, res) {
     const { id } = req.params;
     const dealerId = req.decoded.id;
 
-    // Find the vehicle by ID and dealerId (to ensure ownership)
     const vehicle = await Vehicle.findOne({
-      where: {
-        id,
-        dealerId,
-      },
+      where: { id, dealerId },
     });
 
     if (!vehicle) {
@@ -488,7 +484,6 @@ o.updateVehicle = async function (req, res) {
       );
     }
 
-    // Merge old and new fields
     const updatedData = {
       name: req.body.name || vehicle.name,
       model: req.body.model || vehicle.model,
@@ -503,20 +498,31 @@ o.updateVehicle = async function (req, res) {
       make: req.body.make || vehicle.make,
       year: req.body.year || vehicle.year,
       price: req.body.price || vehicle.price,
-      ...req.body, // include other optional fields
+      ...req.body,
     };
 
-    // Regenerate slug based on updated fields
-    updatedData.slug = slugify(
-      `${updatedData.name}-${updatedData.model}-${updatedData.color}-${updatedData.mileage}-${updatedData.transmission}-${updatedData.fuelType}-${updatedData.registerIn}-${updatedData.bodyType}-${updatedData.engineCapacity}-${updatedData.assemblyIn}`,
-      { lower: true }
-    );
+    // Only regenerate slug if key fields changed
+    const slugFields = [
+      updatedData.name,
+      updatedData.model,
+      updatedData.year,
+      updatedData.make,
+    ]
+      .filter((f) => f != null)
+      .join("-");
 
-    // Update the vehicle
+    if (slugFields) {
+      updatedData.slug = slugify(slugFields, { lower: true });
+    } else {
+      // Fallback: keep existing slug or generate from ID
+      updatedData.slug =
+        vehicle.slug || slugify(`vehicle-${id}`, { lower: true });
+    }
+
     await vehicle.update(updatedData);
-
     return json.successResponse(res, "Vehicle updated successfully.", 200);
   } catch (error) {
+    console.error("Update error:", error);
     return json.errorResponse(res, error.message || error, 400);
   }
 };

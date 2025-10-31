@@ -14,6 +14,7 @@ const Package = db.Package;
 const Dealer = db.Dealer;
 const Repair = db.Repair;
 const Insurance = db.Insurance;
+const Wallet = db.Wallet;
 
 const o = {};
 
@@ -562,6 +563,41 @@ o.handleCheckoutSessionCompleted = async (session) => {
       console.log(
         `✅ [WEBHOOK] Dealer ${userId} verified with ${newAvailableCarListing} total available listings`
       );
+
+      // 🔹🔹🔹 WALLET INITIALIZATION FOR DEALER 🔹🔹🔹
+      console.log(`🏦 [WEBHOOK] Initializing wallet for dealer ${userId}...`);
+      try {
+        const existingWallet = await Wallet.findOne({ where: { userId } });
+        if (!existingWallet) {
+          console.log(`📝 [WEBHOOK] Creating new Wallet record for dealer...`);
+          const newWallet = await Wallet.create({
+            userId: parseInt(userId, 10),
+            totalBalance: 0,
+            spentBalance: 0,
+            remainingBalance: 0,
+            transactions: [],
+          });
+          console.log(`✅ [WEBHOOK] Wallet initialized for dealer ${userId}:`, {
+            id: newWallet.id,
+            userId: newWallet.userId,
+            totalBalance: newWallet.totalBalance,
+            spentBalance: newWallet.spentBalance,
+            remainingBalance: newWallet.remainingBalance,
+            transactions: newWallet.transactions,
+          });
+        } else {
+          console.log(
+            `ℹ️ [WEBHOOK] Wallet already exists for dealer ${userId}`
+          );
+        }
+      } catch (walletErr) {
+        console.error(
+          `❌ [WEBHOOK] Error initializing wallet for dealer ${userId}:`,
+          walletErr.message
+        );
+        // Don't throw - wallet initialization failure shouldn't break the entire flow
+      }
+      // 🔹🔹🔹 END WALLET INITIALIZATION 🔹🔹🔹
     } else if (user.role === "repair") {
       console.log(`📝 [WEBHOOK] Updating Repair record...`);
       const updateResult = await Repair.update(

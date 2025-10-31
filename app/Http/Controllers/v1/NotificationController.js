@@ -74,7 +74,13 @@ o.getUserNotifications = async (req, res) => {
   try {
     const userId = req.decoded.id;
 
-    const notifications = await Notifications.findAll({
+    // Pagination setup
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // Fetch notifications with ordering: unread first, then read (latest first within each group)
+    const { count, rows: notifications } = await Notifications.findAndCountAll({
       where: { receiverId: userId },
       include: [
         { model: Message, as: "message" },
@@ -89,10 +95,39 @@ o.getUserNotifications = async (req, res) => {
           attributes: ["id", "fullname", "email", "phone", "image"],
         },
       ],
-      order: [["createdAt", "DESC"]],
+      order: [
+        ["isRead", "ASC"], // Unread first (false before true)
+        ["createdAt", "DESC"], // Latest first within each group
+      ],
+      limit,
+      offset,
     });
 
-    return json.showAll(res, notifications, 200);
+    // Count unread and read notifications separately
+    const unreadCount = await Notifications.count({
+      where: { receiverId: userId, isRead: false },
+    });
+    const readCount = await Notifications.count({
+      where: { receiverId: userId, isRead: true },
+    });
+
+    return json.showAll(
+      res,
+      {
+        notifications,
+        pagination: {
+          total: count,
+          page,
+          limit,
+          totalPages: Math.ceil(count / limit),
+        },
+        summary: {
+          unreadCount,
+          readCount,
+        },
+      },
+      200
+    );
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }

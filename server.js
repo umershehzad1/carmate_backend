@@ -27,7 +27,8 @@ const messageRoutes = require("./routes/MessageRoutes");
 const reviewRoutes = require("./routes/ReviewRoutes");
 const packageRoutes = require("./routes/PackageRoutes");
 const notificationsRoutes = require("./routes/NotificationRoutes");
-const stripeWebhookRoutes = require("./routes/StripeWebhook"); // ✅ Add this
+const stripeWebhookRoutes = require("./routes/StripeWebhook");
+const walletRoutes = require("./routes/WalletRoutes");
 
 const app = express();
 
@@ -71,7 +72,7 @@ app.use("/api/v1/package", packageRoutes);
 app.use("/api/v1/notifications", notificationsRoutes);
 app.use("/api/v1/conversation", conversationRoutes);
 app.use("/api/v1/message", messageRoutes);
-
+app.use("/api/v1/wallet", walletRoutes);
 // ✅ HTTP Server & Socket.io Setup
 const server = http.createServer(app);
 

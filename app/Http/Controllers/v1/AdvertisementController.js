@@ -10,6 +10,7 @@ const Advertisement = db.Advertisement;
 const Vehicle = db.Vehicle;
 const Dealer = db.Dealer;
 const User = db.User;
+const Wallet = db.Wallet;
 // Sequential field validation function
 function validateRequiredFieldsSequentially(body, requiredFields) {
   for (const field of requiredFields) {
@@ -32,26 +33,79 @@ o.createAd = async function (req, res, next) {
       "adType",
       "startDate",
       "endDate",
-      "dailyBudget",
     ]);
 
     if (user.role !== "dealer") {
       return json.errorResponse(res, "Unauthorized access", 401);
     }
+
     const vehicle = await Vehicle.findByPk(vehicleId);
     if (!vehicle) {
       return json.errorResponse(res, "Vehicle not found", 404);
     }
 
+    // --- For Sponsored Ads Only: Validate Wallet and Deduct Funds ---
+    let requiredAmount = 0;
+    let campaignDays = 0;
+
+    if (adType.toLowerCase() === "sponsored") {
+      const wallet = await Wallet.findOne({ where: { userId: user.id } });
+      if (!wallet) {
+        return json.errorResponse(res, "Wallet not found", 404);
+      }
+
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+
+      campaignDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+      requiredAmount = dailyBudget * campaignDays;
+
+      if (wallet.remainingBalance < requiredAmount) {
+        const shortage = requiredAmount - wallet.remainingBalance;
+        return json.errorResponse(
+          res,
+          `Insufficient balance. You need an additional ${shortage.toFixed(
+            2
+          )} to run this campaign for ${campaignDays} days.`,
+          400
+        );
+      }
+
+      // Deduct balance and update spent balance
+      wallet.remainingBalance =
+        parseFloat(wallet.remainingBalance) - requiredAmount;
+      wallet.spentBalance = parseFloat(wallet.spentBalance) + requiredAmount;
+
+      // Log transaction
+      const transaction = {
+        transactionTime: new Date().toISOString(),
+        title: `Sponsored ad campaign for vehicle ${vehicle?.name}`,
+        amount: requiredAmount,
+        type: "debit",
+      };
+      wallet.transactions = [...(wallet.transactions || []), transaction];
+      await wallet.save();
+    }
+
+    // --- Create Advertisement (applies to both sponsored & featured) ---
     const ad = await Advertisement.create({
-      vehicleId: vehicleId,
+      vehicleId,
       dealerId: user.id,
-      adType: adType,
-      startDate: startDate,
-      endDate: endDate,
-      dailyBudget: dailyBudget,
+      adType,
+      startDate,
+      endDate,
+      dailyBudget,
     });
-    return json.successResponse(res, "Ad created successfully.", 200);
+
+    // --- Dynamic success message ---
+    const message =
+      adType.toLowerCase() === "sponsored"
+        ? `Sponsored ad created successfully. $${requiredAmount.toFixed(
+            2
+          )} has been deducted for ${campaignDays} days.`
+        : "Featured ad created successfully.";
+
+    return json.successResponse(res, message, 200);
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }
@@ -650,7 +704,7 @@ o.getSimilarAds = async function (req, res, next) {
         model: { [Op.iLike]: vehicle.model },
         id: { [Op.ne]: vehicle.id },
       },
-      limit: 10,
+      limit: 4,
     });
 
     const vehicleIds = similarVehicles.map((v) => v.id);

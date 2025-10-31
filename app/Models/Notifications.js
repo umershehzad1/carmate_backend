@@ -52,7 +52,12 @@ module.exports = (sequelize, DataTypes) => {
         references: { model: "Users", key: "id" },
       },
       type: {
-        type: DataTypes.ENUM("message", "test_drive", "repair", "admin_alert"),
+        type: DataTypes.ENUM(
+          "message",
+          "test_drive",
+          "referral",
+          "admin_alert"
+        ),
         allowNull: false,
       },
       messageId: {

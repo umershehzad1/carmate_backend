@@ -60,10 +60,11 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "userId",
         as: "testDriveRequests",
       });
-      // User.hasMany(models.Notifications, {
-      //   foreignKey: "userId",
-      //   as: "notifications",
-      // });
+      User.hasOne(models.Wallet, {
+        foreignKey: "userId",
+        as: "wallet",
+        onDelete: "CASCADE",
+      });
     }
   }
   User.init(
