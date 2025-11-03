@@ -42,7 +42,9 @@ const upload = multer({
 });
 
 const router = express.Router();
-
+router
+  .route("/getrepairstats")
+  .get(authCtrl.authenticate, repairCtrl.getRepairStats);
 router.route("/getallrepairs").get(repairCtrl.getAllRepairs);
 router.route("/:slug").get(repairCtrl.getRepairDetails);
 router

@@ -5,6 +5,9 @@ const User = db.User;
 const Dealer = db.Dealer;
 const Repair = db.Repair;
 const Insurance = db.Insurance;
+
+const Advertisement = db.Advertisement;
+const Subscription = db.Subscription;
 const Wallet = db.Wallet;
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
@@ -21,6 +24,7 @@ const { JWT_EXPIRES_IN } = require("../../../../config/constants");
 const json = require("../../../Traits/ApiResponser");
 const email = require("../../../Traits/SendEmail");
 const { username } = require("../../../../config/mail");
+const { Sequelize } = require("sequelize");
 
 /*
 |--------------------------------------------------------------------------
@@ -424,12 +428,121 @@ o.updateRole = async function (req, res, next) {
 o.getAdminUsers = async function (req, res, next) {
   try {
     const { role } = req.params;
+
+    // Fetch all users of the given role
     const users = await User.findAll({
       where: { role },
+      include: [
+        { model: Dealer, as: "dealer" },
+        { model: Repair, as: "repair" },
+        { model: Insurance, as: "insurance" },
+      ],
+    });
+
+    // Initialize stats object
+    const stats = {};
+
+    // ---------- Dealer Stats ----------
+    if (role === "dealer") {
+      // Get all dealer IDs
+      const dealerIds = users.map((u) => u.id);
+
+      // Fetch total ads and total ad revenue
+      const ads = await Advertisement.findAll({
+        where: { dealerId: dealerIds },
+        attributes: [
+          [Sequelize.fn("COUNT", Sequelize.col("id")), "totalAds"],
+          [Sequelize.fn("SUM", Sequelize.col("amountSpent")), "totalAdRevenue"],
+        ],
+        raw: true,
+      });
+
+      // Fetch dealer subscriptions count
+      const subscriptions = await Subscription.findAll({
+        where: { userId: dealerIds },
+        attributes: [
+          [Sequelize.fn("COUNT", Sequelize.col("id")), "subscriptionCount"],
+        ],
+        raw: true,
+      });
+
+      stats.dealerStats = {
+        totalAds: Number(ads[0]?.totalAds || 0),
+        totalAdRevenue: Number(ads[0]?.totalAdRevenue || 0),
+        subscriptionCount: Number(subscriptions[0]?.subscriptionCount || 0),
+      };
+    }
+
+    // ---------- Repair Stats ----------
+    else if (role === "repair") {
+      const repairIds = users.map((u) => u.id);
+
+      // Fetch total subscription revenue for repair users
+      const subs = await Subscription.findAll({
+        where: { userId: repairIds },
+        attributes: [
+          [
+            Sequelize.literal(
+              `SUM(CAST(REPLACE(REPLACE("price", '$', ''), ',', '') AS NUMERIC))`
+            ),
+            "totalSubscriptionRevenue",
+          ],
+          [Sequelize.fn("COUNT", Sequelize.col("id")), "subscriptionCount"],
+        ],
+        raw: true,
+      });
+
+      stats.repairStats = {
+        totalSubscriptionRevenue: Number(
+          subs[0]?.totalSubscriptionRevenue || 0
+        ),
+        subscriptionCount: Number(subs[0]?.subscriptionCount || 0),
+      };
+    }
+
+    // ---------- Insurance Stats ----------
+    else if (role === "insurance") {
+      const insuranceIds = users.map((u) => u.id);
+
+      // Fetch total subscription revenue for insurance users
+      const subs = await Subscription.findAll({
+        where: { userId: insuranceIds },
+        attributes: [
+          [
+            Sequelize.literal(
+              `SUM(CAST(REPLACE(REPLACE("price", '$', ''), ',', '') AS NUMERIC))`
+            ),
+            "totalSubscriptionRevenue",
+          ],
+          [Sequelize.fn("COUNT", Sequelize.col("id")), "subscriptionCount"],
+        ],
+        raw: true,
+      });
+
+      stats.insuranceStats = {
+        totalSubscriptionRevenue: Number(
+          subs[0]?.totalSubscriptionRevenue || 0
+        ),
+        subscriptionCount: Number(subs[0]?.subscriptionCount || 0),
+      };
+    }
+
+    // Send response with stats if available
+    json.showAll(res, { users, ...stats }, 200);
+  } catch (error) {
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
+
+o.getUserById = async function (req, res, next) {
+  try {
+    const { id } = req.params;
+    const user = await User.findByPk(id, {
       include: [
         {
           model: Dealer,
           as: "dealer",
+          attributes: { exclude: ["userId"] }, // optional: exclude foreign key
         },
         {
           model: Repair,
@@ -439,21 +552,110 @@ o.getAdminUsers = async function (req, res, next) {
           model: Insurance,
           as: "insurance",
         },
+        {
+          model: Wallet,
+          as: "wallet",
+        },
       ],
     });
-    json.showAll(res, users, 200);
-  } catch (error) {
-    return json.errorResponse(res, error.message || error, 400);
-  }
-};
-
-o.getUserById = async function (req, res, next) {
-  try {
-    const { id } = req.params;
-    const user = await User.findByPk(id);
     json.showOne(res, user, 200);
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }
 };
+
+o.getAdminStats = async function (req, res, next) {
+  try {
+    // 1️⃣ Count users by role
+    const [dealers, repairs, insurances] = await Promise.all([
+      User.count({ where: { role: "dealer" } }),
+      User.count({ where: { role: "repair" } }),
+      User.count({ where: { role: "insurance" } }),
+    ]);
+
+    // 2️⃣ Total subscription revenue
+    const totalSubsRevenueResult = await Subscription.findAll({
+      attributes: [
+        [
+          Sequelize.literal(`
+            SUM(
+              CAST(
+                REPLACE(REPLACE(CAST("price" AS TEXT), '$', ''), ',', '') AS NUMERIC
+              )
+            )
+          `),
+          "totalSubscriptionRevenue",
+        ],
+      ],
+      raw: true,
+    });
+
+    const totalSubscriptionRevenue = Number(
+      totalSubsRevenueResult[0]?.totalSubscriptionRevenue || 0
+    );
+
+    // 3️⃣ Dealer ad stats
+    const dealerAdsResult = await Advertisement.findAll({
+      attributes: [
+        [Sequelize.fn("COUNT", Sequelize.col("id")), "totalAds"],
+        [
+          Sequelize.literal(`
+            SUM(
+              CAST(
+                REPLACE(REPLACE(CAST("amountSpent" AS TEXT), '$', ''), ',', '') AS NUMERIC
+              )
+            )
+          `),
+          "totalAdRevenue",
+        ],
+      ],
+      raw: true,
+    });
+
+    const totalAds = Number(dealerAdsResult[0]?.totalAds || 0);
+    const totalAdRevenue = Number(dealerAdsResult[0]?.totalAdRevenue || 0);
+
+    // 4️⃣ Activity chart (monthly revenue)
+    const activityData = await Subscription.findAll({
+      attributes: [
+        [Sequelize.fn("TO_CHAR", Sequelize.col("createdAt"), "MON"), "month"],
+        [
+          Sequelize.literal(`
+            SUM(
+              CAST(
+                REPLACE(REPLACE(CAST("price" AS TEXT), '$', ''), ',', '') AS NUMERIC
+              )
+            )
+          `),
+          "value",
+        ],
+      ],
+      group: [Sequelize.fn("TO_CHAR", Sequelize.col("createdAt"), "MON")],
+      order: [[Sequelize.fn("MIN", Sequelize.col("createdAt")), "ASC"]],
+      raw: true,
+    });
+
+    // 5️⃣ Dashboard summary cards
+    const stats = [
+      { label: "Total Dealers", value: dealers },
+      { label: "Total Repairs", value: repairs },
+      { label: "Total Insurances", value: insurances },
+      {
+        label: "Total Subscription Revenue",
+        value: `$${totalSubscriptionRevenue.toLocaleString()}`,
+      },
+      { label: "Total Ads Posted", value: totalAds },
+      {
+        label: "Total Ad Revenue",
+        value: `$${totalAdRevenue.toLocaleString()}`,
+      },
+    ];
+
+    json.showAll(res, { stats, activityData }, 200);
+  } catch (error) {
+    console.error("Dashboard API Error:", error);
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
+
 module.exports = o;

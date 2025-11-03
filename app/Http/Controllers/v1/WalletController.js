@@ -50,7 +50,7 @@ o.createAddFundsPaymentIntent = async function (req, res, next) {
         userId,
         totalBalance: 0,
         spentBalance: 0,
-        remainingBalance: 0,
+        reserveBalance: 0,
         transactions: [],
       });
       console.log(`✅ [ADD FUNDS] Wallet created for user ${userId}`);
@@ -164,8 +164,6 @@ o.confirmAddFundsPayment = async function (req, res, next) {
     // ✅ Update wallet balances
     const previousBalance = parseFloat(wallet.totalBalance);
     const newTotalBalance = previousBalance + amount;
-    const newRemainingBalance =
-      newTotalBalance - parseFloat(wallet.spentBalance);
 
     // ✅ Create transaction record
     const transactionRecord = {
@@ -182,7 +180,6 @@ o.confirmAddFundsPayment = async function (req, res, next) {
 
     // ✅ Update wallet in database
     wallet.totalBalance = newTotalBalance;
-    wallet.remainingBalance = newRemainingBalance;
     wallet.transactions = updatedTransactions;
 
     // ✅ Mark transactions field as changed (IMPORTANT for JSON fields)
@@ -195,7 +192,6 @@ o.confirmAddFundsPayment = async function (req, res, next) {
       previousBalance,
       addedAmount: amount,
       newTotalBalance,
-      newRemainingBalance,
       transactionCount: updatedTransactions.length,
     });
 
@@ -205,7 +201,6 @@ o.confirmAddFundsPayment = async function (req, res, next) {
       previousBalance,
       addedAmount: amount,
       newTotalBalance,
-      remainingBalance: newRemainingBalance,
       transactionTime: transactionRecord.transactionTime,
     };
 

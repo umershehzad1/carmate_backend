@@ -36,6 +36,11 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: "running",
         allowNull: false,
       },
+      pauseReason: {
+        type: DataTypes.ENUM("user", "budget", "system", "none"),
+        allowNull: false,
+        defaultValue: "none",
+      },
       adType: {
         type: DataTypes.ENUM("featured", "sponsored"),
         defaultValue: "featured",
@@ -68,6 +73,19 @@ module.exports = (sequelize, DataTypes) => {
       endDate: {
         type: DataTypes.DATE,
         allowNull: true,
+      },
+      clicksToday: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 0,
+      },
+      lastClickDate: {
+        type: DataTypes.STRING,
+        allowNull: true,
+      },
+      userClicks: {
+        type: DataTypes.JSONB,
+        defaultValue: [],
       },
     },
     {

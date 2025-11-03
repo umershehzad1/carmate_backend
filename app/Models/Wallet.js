@@ -38,7 +38,7 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: 0,
       },
-      remainingBalance: {
+      reserveBalance: {
         type: DataTypes.DECIMAL(15, 2),
         allowNull: false,
         defaultValue: 0,

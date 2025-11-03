@@ -44,7 +44,7 @@ o.createAd = async function (req, res, next) {
       return json.errorResponse(res, "Vehicle not found", 404);
     }
 
-    // --- For Sponsored Ads Only: Validate Wallet and Deduct Funds ---
+    // --- For Sponsored Ads Only: Validate Wallet and Reserve Funds ---
     let requiredAmount = 0;
     let campaignDays = 0;
 
@@ -58,31 +58,35 @@ o.createAd = async function (req, res, next) {
       const end = new Date(endDate);
 
       campaignDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
-      requiredAmount = dailyBudget * campaignDays;
+      requiredAmount = parseFloat(dailyBudget) * campaignDays;
 
-      if (wallet.remainingBalance < requiredAmount) {
-        const shortage = requiredAmount - wallet.remainingBalance;
+      // --- Dynamically calculate remaining funds ---
+      const remainingBalance =
+        parseFloat(wallet.totalBalance) - parseFloat(wallet.reserveBalance);
+
+      if (remainingBalance < requiredAmount) {
+        const shortage = requiredAmount - remainingBalance;
         return json.errorResponse(
           res,
-          `Insufficient balance. You need an additional ${shortage.toFixed(
+          `Insufficient balance. You need an additional $${shortage.toFixed(
             2
           )} to run this campaign for ${campaignDays} days.`,
           400
         );
       }
 
-      // Deduct balance and update spent balance
-      wallet.remainingBalance =
-        parseFloat(wallet.remainingBalance) - requiredAmount;
-      wallet.spentBalance = parseFloat(wallet.spentBalance) + requiredAmount;
+      // --- Reserve funds for campaign ---
+      wallet.reserveBalance =
+        parseFloat(wallet.reserveBalance) + requiredAmount;
 
-      // Log transaction
+      // --- Log transaction ---
       const transaction = {
         transactionTime: new Date().toISOString(),
-        title: `Sponsored ad campaign for vehicle ${vehicle?.name}`,
+        title: `Funds reserved for sponsored ad campaign on vehicle ${vehicle?.name}`,
         amount: requiredAmount,
-        type: "debit",
+        type: "reserve",
       };
+
       wallet.transactions = [...(wallet.transactions || []), transaction];
       await wallet.save();
     }
@@ -102,7 +106,7 @@ o.createAd = async function (req, res, next) {
       adType.toLowerCase() === "sponsored"
         ? `Sponsored ad created successfully. $${requiredAmount.toFixed(
             2
-          )} has been deducted for ${campaignDays} days.`
+          )} has been reserved for ${campaignDays} days.`
         : "Featured ad created successfully.";
 
     return json.successResponse(res, message, 200);
@@ -751,22 +755,21 @@ o.updateAdStatus = async function (req, res, next) {
   try {
     const { id } = req.params;
     const { status, endDate } = req.body;
+    const user = req.decoded;
 
     // Ensure user is a dealer
-    if (req.decoded.role !== "dealer") {
+    if (user.role !== "dealer") {
       return json.errorResponse(res, "Unauthorized access", 401);
     }
 
-    // Fetch ad with vehicle relationship
+    // Fetch ad
     const ad = await Advertisement.findByPk(id);
-
-    // Check if ad exists
     if (!ad) {
       return json.errorResponse(res, "Ad not found", 404);
     }
 
-    // Verify ownership: only the dealer who owns the vehicle can modify the ad
-    if (ad.dealerId !== req.decoded.id) {
+    // Verify ownership
+    if (ad.dealerId !== user.id) {
       return json.errorResponse(
         res,
         "You can only update ads for your own vehicles",
@@ -774,16 +777,54 @@ o.updateAdStatus = async function (req, res, next) {
       );
     }
 
-    // Update status
+    // --- Handle status change ---
     if (status) {
-      ad.status = status;
+      // Check for "stopped" status — user manually paused
+      if (status === "stopped") {
+        ad.status = "stopped";
+        ad.pauseReason = "user";
+      }
+
+      // Check for "running" status — user wants to resume
+      if (status === "running") {
+        const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+        const end = new Date(ad.endDate);
+
+        // 1️⃣ Check if ad end date has passed
+        if (end < new Date(today)) {
+          return json.errorResponse(
+            res,
+            "Cannot resume this ad because its end date has already passed.",
+            400
+          );
+        }
+
+        // 2️⃣ Check if daily budget was already reached today
+        const costPerClick = 0.1;
+        const potentialSpentToday = (ad.clicksToday || 0) * costPerClick;
+
+        if (potentialSpentToday >= parseFloat(ad.dailyBudget)) {
+          return json.errorResponse(
+            res,
+            "Cannot resume this ad because its daily budget has already been reached for today.",
+            400
+          );
+        }
+
+        // ✅ If checks pass — resume the ad
+        ad.status = "running";
+        ad.pauseReason = "none";
+      }
     }
-    if (ad.endDate) {
+
+    // --- Optionally update end date ---
+    if (endDate) {
       ad.endDate = endDate;
     }
+
     await ad.save();
 
-    return json.successResponse(res, `Ad updated Successfully`, 200);
+    return json.successResponse(res, "Ad updated successfully.", 200);
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }
@@ -798,10 +839,8 @@ o.deleteAd = async function (req, res, next) {
       return json.errorResponse(res, "Unauthorized access", 401);
     }
 
-    // Fetch ad with vehicle relation
+    // Fetch ad
     const ad = await Advertisement.findByPk(id);
-
-    // Check if ad exists
     if (!ad) {
       return json.errorResponse(res, "Ad not found", 404);
     }
@@ -815,7 +854,44 @@ o.deleteAd = async function (req, res, next) {
       );
     }
 
-    // Delete the ad
+    // --- Handle wallet fund adjustment for sponsored ads ---
+    if (ad.adType.toLowerCase() === "sponsored") {
+      const wallet = await Wallet.findOne({ where: { userId: ad.dealerId } });
+      if (!wallet) {
+        return json.errorResponse(res, "Wallet not found", 404);
+      }
+
+      // Calculate total reserved amount for this ad
+      const start = new Date(ad.startDate);
+      const end = new Date(ad.endDate);
+      const campaignDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+
+      const totalReserved = parseFloat(ad.dailyBudget) * campaignDays;
+      const spentAmount = parseFloat(ad.amountSpent || 0);
+      const refundAmount = totalReserved - spentAmount;
+
+      // Only refund if positive
+      if (refundAmount > 0) {
+        // Deduct from reserve balance
+        wallet.reserveBalance = Math.max(
+          parseFloat(wallet.reserveBalance) - refundAmount,
+          0
+        );
+
+        // Log transaction
+        const transaction = {
+          transactionTime: new Date().toISOString(),
+          title: `Refund for deleted ad ID ${ad.id}`,
+          amount: refundAmount,
+          type: "credit",
+        };
+        wallet.transactions = [...(wallet.transactions || []), transaction];
+
+        await wallet.save();
+      }
+    }
+
+    // --- Delete the ad ---
     await ad.destroy();
 
     return json.successResponse(res, "Ad deleted successfully.", 200);
@@ -828,20 +904,87 @@ o.extendAdCompaign = async function (req, res, next) {
   try {
     const { id } = req.params;
     const { startDate, endDate, dailyBudget } = req.body;
+    const user = req.decoded;
+
     validateRequiredFieldsSequentially(req.body, ["endDate", "dailyBudget"]);
+
+    // --- Fetch the advertisement ---
     const ad = await Advertisement.findByPk(id);
     if (!ad) {
       return json.errorResponse(res, "Ad not found", 404);
     }
-    if (ad.dealerId !== req.decoded.id) {
+
+    // --- Ownership validation ---
+    if (ad.dealerId !== user.id) {
       return json.errorResponse(res, "You can only update your own ads", 401);
     }
-    ad.startDate = startDate;
+
+    // --- Only check for wallet balance if ad type is sponsored ---
+    if (ad.adType.toLowerCase() === "sponsored") {
+      const wallet = await Wallet.findOne({ where: { userId: user.id } });
+      if (!wallet) {
+        return json.errorResponse(res, "Wallet not found", 404);
+      }
+
+      const oldEndDate = new Date(ad.endDate);
+      const newEndDate = new Date(endDate);
+
+      // If new end date is not after current one → no extension
+      if (newEndDate <= oldEndDate) {
+        return json.errorResponse(
+          res,
+          "New end date must be later than the current end date.",
+          400
+        );
+      }
+
+      // --- Calculate additional days ---
+      const additionalDays = Math.ceil(
+        (newEndDate - oldEndDate) / (1000 * 60 * 60 * 24)
+      );
+
+      // --- Calculate required funds for extension ---
+      const requiredAmount = parseFloat(dailyBudget) * additionalDays;
+
+      // --- Compute remaining wallet balance manually ---
+      const remainingBalance =
+        parseFloat(wallet.totalBalance) - parseFloat(wallet.reserveBalance);
+
+      if (remainingBalance < requiredAmount) {
+        const shortage = requiredAmount - remainingBalance;
+        return json.errorResponse(
+          res,
+          `Insufficient wallet balance. You need an additional ${shortage.toFixed(
+            2
+          )} to extend this campaign by ${additionalDays} days.`,
+          400
+        );
+      }
+
+      // --- Reserve additional funds ---
+      wallet.reserveBalance =
+        parseFloat(wallet.reserveBalance) + requiredAmount;
+
+      // --- Log the reservation transaction ---
+      const transaction = {
+        transactionTime: new Date().toISOString(),
+        title: `Funds reserved for extending ad ID ${ad.id} by ${additionalDays} days.`,
+        amount: requiredAmount,
+        type: "debit",
+      };
+
+      wallet.transactions = [...(wallet.transactions || []), transaction];
+      await wallet.save();
+    }
+
+    // --- Update the ad fields ---
+    if (startDate) ad.startDate = startDate;
     ad.endDate = endDate;
     ad.dailyBudget = dailyBudget;
+
     await ad.save();
 
-    return json.successResponse(res, "Ad updated successfully.", 200);
+    return json.successResponse(res, "Ad campaign extended successfully.", 200);
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }
@@ -849,16 +992,157 @@ o.extendAdCompaign = async function (req, res, next) {
 
 o.registerAdClick = async function (req, res, next) {
   try {
+    console.log("=== [DEBUG] registerAdClick START ===");
+    console.log("[DEBUG] Request Params:", req.params);
+    console.log("[DEBUG] Request Headers:", req.headers);
+    console.log("[DEBUG] Request Cookies:", req.cookies);
+    console.log("[DEBUG] Decoded User:", req.decoded);
+
     const { id } = req.params;
     const ad = await Advertisement.findByPk(id);
+
     if (!ad) {
+      console.log("[DEBUG] Advertisement not found for ID:", id);
       return json.errorResponse(res, "Ad not found", 404);
     }
+
+    console.log("[DEBUG] Advertisement found:", {
+      id: ad.id,
+      adType: ad.adType,
+      dealerId: ad.dealerId,
+      dailyBudget: ad.dailyBudget,
+    });
+
+    // Identify user or device
+    const user = req.decoded || null;
+    const deviceId =
+      req.headers["x-device-id"] || (req.cookies ? req.cookies.deviceId : null);
+
+    console.log("[DEBUG] Extracted deviceId:", deviceId);
+
+    const userIdentifier = user ? `user_${user.id}` : `device_${deviceId}`;
+    console.log("[DEBUG] Computed userIdentifier:", userIdentifier);
+
+    // Initialize userClicks if not present
+    ad.userClicks = ad.userClicks || [];
+
+    // Increment total views (view metric)
+    ad.views = ad.views + 1;
+
+    // Check if user/device already clicked
+    const hasClickedBefore = ad.userClicks.includes(userIdentifier);
+    console.log("[DEBUG] Has clicked before:", hasClickedBefore);
+    console.log("[DEBUG] Current userClicks array:", ad.userClicks);
+
+    // Always increment total clicks
     ad.clicks = ad.clicks + 1;
     ad.views = ad.views + 1;
+
+    // Handle sponsored ads
+    if (ad.adType && ad.adType.toLowerCase() === "sponsored") {
+      console.log(
+        "[DEBUG] Sponsored ad detected. Proceeding with wallet checks..."
+      );
+
+      const wallet = await Wallet.findOne({ where: { userId: ad.dealerId } });
+      if (!wallet) {
+        console.log("[DEBUG] Wallet not found for dealerId:", ad.dealerId);
+        return json.errorResponse(res, "Wallet not found", 404);
+      }
+
+      console.log("[DEBUG] Wallet found:", {
+        userId: wallet.userId,
+        totalBalance: wallet.totalBalance,
+        reserveBalance: wallet.reserveBalance,
+        spentBalance: wallet.spentBalance,
+      });
+
+      const costPerClick = 0.1; // $0.10 per click
+      const today = new Date().toISOString().split("T")[0];
+
+      if (!ad.lastClickDate || ad.lastClickDate !== today) {
+        console.log(
+          "[DEBUG] New day detected, resetting daily click tracking."
+        );
+        ad.clicksToday = 0;
+        ad.lastClickDate = today;
+        ad.userClicks = [];
+      }
+
+      const potentialSpentToday = (ad.clicksToday + 1) * costPerClick;
+      console.log("[DEBUG] Potential spent today:", potentialSpentToday);
+
+      if (potentialSpentToday <= parseFloat(ad.dailyBudget)) {
+        if (!hasClickedBefore) {
+          console.log(
+            "[DEBUG] First click from this user/device. Proceeding to charge."
+          );
+
+          if (wallet.reserveBalance >= costPerClick) {
+            console.log("[DEBUG] Sufficient funds. Deducting cost...");
+
+            wallet.totalBalance =
+              parseFloat(wallet.totalBalance) - costPerClick;
+            wallet.reserveBalance =
+              parseFloat(wallet.reserveBalance) - costPerClick;
+            wallet.spentBalance =
+              parseFloat(wallet.spentBalance) + costPerClick;
+            ad.amountSpent = parseFloat(ad.amountSpent || 0) + costPerClick;
+
+            const transaction = {
+              transactionTime: new Date().toISOString(),
+              title: `Ad click charge for advertisement ID ${ad.id}`,
+              amount: costPerClick,
+              type: "debit",
+            };
+
+            wallet.transactions = [...(wallet.transactions || []), transaction];
+            await wallet.save();
+
+            ad.clicksToday += 1;
+            ad.userClicks = [...(ad.userClicks || []), userIdentifier];
+
+            console.log("[DEBUG] Click charge processed successfully.");
+          } else {
+            console.log("[DEBUG] Insufficient funds. Charge aborted.");
+            return json.errorResponse(
+              res,
+              "Insufficient reserved funds to process click charge.",
+              400
+            );
+          }
+        } else {
+          console.log("[DEBUG] Duplicate click detected. No charge applied.");
+        }
+      } else {
+        console.log("[DEBUG] Daily budget reached. Stopping ad.");
+        ad.status = "stopped";
+        ad.pauseReason = "budget";
+        await ad.save();
+
+        return json.successResponse(
+          res,
+          `Ad click registered, but daily budget of $${ad.dailyBudget} has been reached. Ad has been stopped.`,
+          200
+        );
+      }
+    }
+
     await ad.save();
-    return json.successResponse(res, "Ad click registered.", 200);
+    console.log(
+      "[DEBUG] Advertisement saved successfully. Updated clicks/views."
+    );
+
+    const message = hasClickedBefore
+      ? "Ad click registered (no charge — duplicate user/device)."
+      : "Ad click registered and charged successfully.";
+
+    console.log("[DEBUG] Final Response Message:", message);
+    console.log("=== [DEBUG] registerAdClick END ===");
+
+    return json.successResponse(res, message, 200);
   } catch (error) {
+    console.error("[ERROR] registerAdClick Exception:", error);
     return json.errorResponse(res, error.message || error, 400);
   }
 };
@@ -870,7 +1154,6 @@ o.getDealerStats = async function (req, res, next) {
     // Fetch all advertisements belonging to this dealer
     const ads = await Advertisement.findAll({
       where: { dealerId },
-      attributes: ["id", "clicks", "leads", "views", "createdAt", "updatedAt"],
     });
 
     if (!ads || ads.length === 0) {
@@ -913,6 +1196,21 @@ o.getDealerStats = async function (req, res, next) {
   }
 };
 
+o.registerLead = async function (req, res, next) {
+  try {
+    const { id } = req.params;
+    const ad = await Advertisement.findByPk(id);
+
+    if (!ad) {
+      return json.errorResponse(res, "Advertisement not found", 404);
+    }
+    ad.leads += 1;
+    await ad.save();
+    return json.successResponse(res, "Lead registered successfully", 200);
+  } catch (error) {
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
 // Helper function to generate empty weekly data
 function generateEmptyWeeklyData() {
   const data = [];

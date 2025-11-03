@@ -83,5 +83,7 @@ router
 router
   .route("/upload")
   .post(authCtrl.authenticate, upload.single("attachment"), uploadCtrl.upload);
-
+router
+  .route("/getadminstats")
+  .get(authCtrl.authenticate, authCtrl.isAdmin, userCtrl.getAdminStats);
 module.exports = router;
