@@ -748,6 +748,22 @@ o.deleteVehicle = async function (req, res, next) {
       );
     }
 
+    // Delete all notifications related to test drive requests for this vehicle
+    const TestDriveRequest = db.TestDriveRequest;
+    const Notification = db.Notification || db.Notifications;
+    const testDriveRequests = await TestDriveRequest.findAll({
+      where: { vehicleId: id },
+    });
+    if (testDriveRequests && testDriveRequests.length > 0 && Notification) {
+      const testDriveRequestIds = testDriveRequests.map((r) => r.id);
+      await Notification.destroy({
+        where: { testDriveRequestId: testDriveRequestIds },
+      });
+    }
+
+    // Delete all test drive requests for this vehicle
+    await TestDriveRequest.destroy({ where: { vehicleId: id } });
+
     // Delete vehicle if no active ad exists
     await Vehicle.destroy({ where: { id } });
 
@@ -806,8 +822,14 @@ o.getAllMakes = async function (req, res, next) {
       raw: true,
     });
 
-    // Extract only the 'make' values into a plain array
-    const responseData = makes.map((item) => item.make);
+    // Extract only the 'make' values into a plain array and sort alphabetically
+    const responseData = makes
+      .map((item) => item.make)
+      .sort((a, b) => {
+        if (!a) return 1;
+        if (!b) return -1;
+        return a.localeCompare(b);
+      });
 
     return json.successResponse(res, responseData, 200);
   } catch (error) {
