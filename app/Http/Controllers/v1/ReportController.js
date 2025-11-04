@@ -10,6 +10,7 @@ const ReportedContent = db.ReportedContent;
 const Vehicle = db.Vehicle;
 const Dealer = db.Dealer;
 const User = db.User;
+const createAndEmitNotification = require("../../../Traits/CreateAndEmitNotification");
 // Sequential field validation function
 function validateRequiredFieldsSequentially(body, requiredFields) {
   for (const field of requiredFields) {
@@ -66,7 +67,7 @@ o.createReport = async function (req, res, io) {
     // Emit notification to all admins
     try {
       const admins = await User.findAll({ where: { role: "admin" } });
-      const createAndEmitNotification = require("../../../Traits/CreateAndEmitNotification");
+
       for (const admin of admins) {
         await createAndEmitNotification(
           {

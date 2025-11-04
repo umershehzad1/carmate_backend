@@ -14,7 +14,7 @@ const upload = multer({
 
 const router = express.Router();
 
-router.route("/").post(reportController.createReport);
+router.route("/").post(authCtrl.authenticate, reportController.createReport);
 router
   .route("/getallreports")
   .get(authCtrl.authenticate, authCtrl.isAdmin, reportController.getAllReports);
