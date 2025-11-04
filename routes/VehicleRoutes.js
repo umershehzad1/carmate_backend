@@ -56,15 +56,17 @@ const imageFileFilter = (req, file, cb) => {
   }
 };
 
-// Multer instances
+// Multer instance for CSV (disk storage)
 const uploadCSV = multer({
   storage: storage,
   fileFilter: csvFileFilter,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB for CSV
 });
 
-const uploadImages = multer({
-  storage: storage, // Use the disk storage configuration
+// Multer instance for images (memory storage for Cloudinary)
+const memoryStorage = multer.memoryStorage();
+const uploadImagesMemory = multer({
+  storage: memoryStorage,
   fileFilter: imageFileFilter,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB per image
 });
@@ -75,7 +77,7 @@ router.route("/getallvehiclesmakes").get(vehicleCtrl.getAllMakes);
 // Vehicle Routes
 router.route("/addvehicle").post(
   authCtrl.authenticate,
-  uploadImages.array("images"), // "images" is the field name sent from frontend
+  uploadImagesMemory.array("images"), // "images" is the field name sent from frontend
   vehicleCtrl.addVehicle
 );
 
@@ -92,7 +94,13 @@ router
   .route("/getdealervehicles/:status?")
   .get(authCtrl.authenticate, vehicleCtrl.getDealerVehicles);
 
-router.route("/:id").patch(authCtrl.authenticate, vehicleCtrl.updateVehicle);
+router
+  .route("/:id")
+  .patch(
+    authCtrl.authenticate,
+    uploadImagesMemory.array("images"),
+    vehicleCtrl.updateVehicle
+  );
 router.route("/:id").delete(authCtrl.authenticate, vehicleCtrl.deleteVehicle);
 router.route("/getallvehiclesmodels/:make").get(vehicleCtrl.getModelsByMake);
 module.exports = router;

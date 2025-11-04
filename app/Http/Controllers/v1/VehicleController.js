@@ -1,7 +1,7 @@
 "use strict";
 
 const path = require("path");
-const fs = require("fs");
+const cloudinary = require("../../../Traits/Cloudinary");
 const csv = require("csv-parser");
 const slugify = require("slugify");
 const json = require("../../../Traits/ApiResponser"); // Your custom response helper
@@ -167,14 +167,30 @@ o.addVehicle = async function (req, res, next) {
       }
     }
 
-    // Handle uploaded files from req.files
+    // Handle uploaded files from req.files and upload to Cloudinary
     const finalImages = [];
     if (req.files && req.files.length > 0) {
-      // Construct full URLs with server address
-      const serverAddress = process.env.APP_URL;
-      req.files.forEach((file) => {
-        finalImages.push(`${serverAddress}/uploads/vehicles/${file.filename}`);
-      });
+      for (const file of req.files) {
+        try {
+          const result = await cloudinary.uploader.upload(
+            `data:${file.mimetype};base64,${file.buffer.toString("base64")}`,
+            {
+              resource_type: "image",
+              folder: "vehicles",
+            }
+          );
+          // Only push the URL string
+          if (result && typeof result.secure_url === "string") {
+            finalImages.push(result.secure_url);
+          }
+        } catch (error) {
+          return json.errorResponse(
+            res,
+            `Image upload failed: ${error.message || error}`,
+            400
+          );
+        }
+      }
     }
 
     // Validate images
@@ -337,14 +353,7 @@ o.bulkUploadVehicles = async function (req, res, next) {
                 `${row.name}-${row.model}-${row.color}-${row.mileage}-${Date.now()}`,
                 { lower: true }
               ),
-              images: row.images
-                ? row.images.split("|").map((img) => {
-                    const serverAddress = process.env.APP_URL;
-                    return img.startsWith("http")
-                      ? img
-                      : `${serverAddress}${img}`;
-                  })
-                : [],
+              images: row.images,
               price: row.price,
               city: row.city,
               province: row.province,
@@ -500,6 +509,89 @@ o.updateVehicle = async function (req, res) {
       price: req.body.price || vehicle.price,
       ...req.body,
     };
+
+    // Log incoming image data for debugging
+    console.log("updateVehicle: req.files:", req.files);
+    console.log("updateVehicle: req.body.images:", req.body.images);
+    console.log(
+      "updateVehicle: req.body.existingImages:",
+      req.body.existingImages
+    );
+    // Handle uploaded files from req.files and upload to Cloudinary
+    let finalImages = [];
+    // Parse existing image URLs from req.body.existingImages
+    if (req.body.existingImages) {
+      try {
+        const existing = JSON.parse(req.body.existingImages);
+        if (Array.isArray(existing)) {
+          finalImages = existing.filter((url) => typeof url === "string");
+        }
+      } catch (e) {
+        console.error("Failed to parse existingImages:", e);
+      }
+    }
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        try {
+          console.log("Uploading file to Cloudinary:", {
+            originalname: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+          });
+          const result = await cloudinary.uploader.upload(
+            `data:${file.mimetype};base64,${file.buffer.toString("base64")}`,
+            {
+              resource_type: "image",
+              folder: "vehicles",
+              timeout: 60000, // 60 seconds
+            }
+          );
+          // Only push the URL string
+          if (result && typeof result.secure_url === "string") {
+            finalImages.push(result.secure_url);
+          }
+        } catch (error) {
+          let errorMsg = "";
+          if (error.message) {
+            errorMsg = error.message;
+          } else if (typeof error === "object") {
+            errorMsg = JSON.stringify(error);
+          } else {
+            errorMsg = String(error);
+          }
+          console.error("Cloudinary upload error:", error);
+          return json.errorResponse(
+            res,
+            `Image upload failed: ${errorMsg}`,
+            400
+          );
+        }
+      }
+      console.log("updateVehicle: finalImages:", finalImages);
+      updatedData.images = finalImages;
+    } else if (finalImages.length > 0) {
+      updatedData.images = finalImages;
+    } else if (req.body.images) {
+      // If images are sent in body, ensure it's an array of strings
+      if (Array.isArray(req.body.images)) {
+        updatedData.images = req.body.images.filter(
+          (img) => typeof img === "string"
+        );
+      } else if (typeof req.body.images === "string") {
+        try {
+          const parsed = JSON.parse(req.body.images);
+          updatedData.images = Array.isArray(parsed)
+            ? parsed.filter((img) => typeof img === "string")
+            : [parsed].filter((img) => typeof img === "string");
+        } catch {
+          updatedData.images = [req.body.images];
+        }
+      } else {
+        updatedData.images = [req.body.images].filter(
+          (img) => typeof img === "string"
+        );
+      }
+    }
 
     // Only regenerate slug if key fields changed
     const slugFields = [

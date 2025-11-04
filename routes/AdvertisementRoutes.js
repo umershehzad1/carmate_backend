@@ -33,5 +33,8 @@ router
   .route("/extendadcompaign/:id")
   .patch(authCtrl.authenticate, advertisementCtrl.extendAdCompaign);
 router.route("/registeradclick/:id").post(advertisementCtrl.registerAdClick);
-router.route("/registerlead/:id").post(advertisementCtrl.registerLead);
+router
+  .route("/registerlead/:id")
+  .patch(authCtrl.authenticate, advertisementCtrl.registerLead);
+router.route("/getaddetails/:adId").get(advertisementCtrl.getAdDetailsBySlug);
 module.exports = router;

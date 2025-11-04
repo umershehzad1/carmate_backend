@@ -87,6 +87,10 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.JSONB,
         defaultValue: [],
       },
+      userLeads: {
+        type: DataTypes.JSONB,
+        defaultValue: [],
+      },
     },
     {
       sequelize,

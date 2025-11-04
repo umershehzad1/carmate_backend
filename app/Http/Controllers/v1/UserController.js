@@ -25,6 +25,7 @@ const json = require("../../../Traits/ApiResponser");
 const email = require("../../../Traits/SendEmail");
 const { username } = require("../../../../config/mail");
 const { Sequelize } = require("sequelize");
+const cloudinary = require("../../../Traits/Cloudinary");
 
 /*
 |--------------------------------------------------------------------------
@@ -193,11 +194,23 @@ o.edit = async (req, res, next) => {
     if (req.body.username) properties.username = req.body.username;
     if (req.body.email) properties.email = req.body.email;
 
-    // Handle image upload
-    if (req.file) {
-      // Construct full URL with server address
-      const serverAddress = process.env.APP_URL;
-      properties.image = `${serverAddress}/uploads/user/${req.file.filename}`;
+    // Handle image upload to Cloudinary using buffer
+    if (req.file && req.file.buffer) {
+      try {
+        const result = await cloudinary.uploader.upload(
+          `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`,
+          {
+            resource_type: "image",
+            folder: "user",
+          }
+        );
+        properties.image = result.secure_url;
+      } catch (error) {
+        return json.errorResponse(
+          res,
+          "Image upload failed: " + (error.message || error)
+        );
+      }
     }
 
     // Find the user first

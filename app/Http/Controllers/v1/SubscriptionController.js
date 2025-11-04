@@ -15,6 +15,7 @@ const Dealer = db.Dealer;
 const Repair = db.Repair;
 const Insurance = db.Insurance;
 const Wallet = db.Wallet;
+const createAndEmitNotification = require("../../../Traits/CreateAndEmitNotification");
 
 const o = {};
 
@@ -413,6 +414,30 @@ o.handleCheckoutSessionCompleted = async (session) => {
       fullname: user.fullname,
       currentRole: user.role,
     });
+
+    // Emit notification to all admins
+    try {
+      const admins = await User.findAll({ where: { role: "admin" } });
+
+      const io = global.io || null; // Use global.io if available
+      for (const admin of admins) {
+        await createAndEmitNotification(
+          {
+            senderId: user.id,
+            receiverId: admin.id,
+            type: "admin_alert",
+            content: `${user.fullname} bought the subscription ${packageData.package}`,
+          },
+          io
+        );
+      }
+      console.log(`✅ [WEBHOOK] Notifications sent to all admins.`);
+    } catch (notifErr) {
+      console.error(
+        "❌ [WEBHOOK] Error sending notifications to admins:",
+        notifErr
+      );
+    }
 
     const newRole = packageData.packageCategory;
     console.log(`🎯 [WEBHOOK] New role from package: ${newRole}`);

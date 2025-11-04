@@ -5,6 +5,27 @@ const multer = require("multer");
 const path = require("path");
 
 // Configure multer for user image uploads
+
+// Use memory storage for edit route so req.file.buffer is available
+const memoryStorage = multer.memoryStorage();
+const uploadMemory = multer({
+  storage: memoryStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: function (req, file, cb) {
+    const allowedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(
+        new Error(
+          "Invalid file type. Only JPEG, PNG, GIF and WEBP are allowed."
+        )
+      );
+    }
+  },
+});
+
+// Keep disk storage for other routes if needed
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     cb(null, path.join(__dirname, "../public/uploads/user"));
@@ -15,10 +36,9 @@ const storage = multer.diskStorage({
     cb(null, uniqueSuffix + ext);
   },
 });
-
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: function (req, file, cb) {
     const allowedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
     if (allowedTypes.includes(file.mimetype)) {
@@ -49,7 +69,7 @@ router
   .get(authCtrl.authenticate, userCtrl.me)
   .patch(
     authCtrl.authenticate,
-    upload.single("image"),
+    uploadMemory.single("image"),
     userReq.edit,
     userReq.validate,
     userCtrl.edit

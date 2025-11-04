@@ -1,4 +1,6 @@
-"use strict";
+// Fetch order details by vehicle slug
+
+("use strict");
 
 const path = require("path");
 const fs = require("fs");
@@ -1196,21 +1198,112 @@ o.getDealerStats = async function (req, res, next) {
   }
 };
 
-o.registerLead = async function (req, res, next) {
+o.getAdDetailsBySlug = async function (req, res, next) {
   try {
-    const { id } = req.params;
-    const ad = await Advertisement.findByPk(id);
+    const { adId } = req.params;
 
-    if (!ad) {
-      return json.errorResponse(res, "Advertisement not found", 404);
+    const orderDetails = await Advertisement.findOne({
+      where: { id: adId },
+      include: [
+        {
+          model: Vehicle,
+          as: "vehicle",
+        },
+        {
+          model: User,
+          as: "dealer",
+          attributes: ["id", "fullname", "email", "phone", "role", "image"],
+          include: [
+            {
+              model: Dealer,
+              as: "dealer",
+            },
+          ],
+        },
+      ],
+    });
+    if (!orderDetails) {
+      return json.errorResponse(
+        res,
+        "Order details not found for this vehicle",
+        404
+      );
     }
-    ad.leads += 1;
-    await ad.save();
-    return json.successResponse(res, "Lead registered successfully", 200);
+    return json.showOne(res, orderDetails, 200);
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }
 };
+
+o.registerLead = async function (req, res, next) {
+  try {
+    const { id } = req.params;
+    const userId = req.decoded.id;
+
+    console.log("➡️ Register Lead Request");
+    console.log("Advertisement ID:", id);
+    console.log("User ID:", userId);
+
+    // Fetch the advertisement
+    const ad = await Advertisement.findByPk(id);
+
+    if (!ad) {
+      console.log("❌ Advertisement not found:", id);
+      return json.errorResponse(res, "Advertisement not found", 404);
+    }
+
+    console.log("✅ Advertisement found:", {
+      id: ad.id,
+      leads: ad.leads,
+      userLeads: ad.userLeads,
+    });
+
+    // Ensure userLeads is always an array
+    let userLeads = [];
+    if (Array.isArray(ad.userLeads)) {
+      userLeads = ad.userLeads;
+    } else if (ad.userLeads && typeof ad.userLeads === "object") {
+      // Handle any unexpected format (e.g., object instead of array)
+      userLeads = Object.values(ad.userLeads);
+    }
+
+    console.log("📋 Current userLeads array:", userLeads);
+
+    // Convert userId to string for consistent JSONB comparison
+    const userIdStr = String(userId);
+
+    // Check if user already exists in userLeads
+    if (userLeads.includes(userIdStr) || userLeads.includes(userId)) {
+      console.log("⚠️ Lead already exists for user:", userIdStr);
+      return json.errorResponse(
+        res,
+        "You have already registered a lead for this ad.",
+        400
+      );
+    }
+
+    // Add userId to userLeads array
+    userLeads.push(userIdStr);
+    const newLeadCount = ad.leads + 1;
+
+    console.log("🧩 Updated userLeads array (to be saved):", userLeads);
+    console.log("📈 New leads count:", newLeadCount);
+
+    // Update the record
+    await Advertisement.update(
+      { userLeads, leads: newLeadCount },
+      { where: { id } }
+    );
+
+    console.log("✅ Lead registered and advertisement updated in DB.");
+
+    return json.successResponse(res, "Lead registered successfully", 200);
+  } catch (error) {
+    console.error("💥 Error in registerLead:", error);
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
+
 // Helper function to generate empty weekly data
 function generateEmptyWeeklyData() {
   const data = [];

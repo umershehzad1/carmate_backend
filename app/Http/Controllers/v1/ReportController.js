@@ -22,9 +22,10 @@ function validateRequiredFieldsSequentially(body, requiredFields) {
 
 const o = {};
 
-o.createReport = async function (req, res, next) {
+o.createReport = async function (req, res, io) {
   try {
     const { vehicleId } = req.body; // Vehicle ID
+    const userId = req.decoded.id;
 
     // Step 1: Verify that the vehicle exists
     const vehicle = await Vehicle.findByPk(vehicleId);
@@ -37,16 +38,48 @@ o.createReport = async function (req, res, next) {
       where: { vehicleId: vehicleId },
     });
 
-    // Step 3: If found, increment the reports count
+    // Step 2.5: Check if this user already reported this vehicle
+    // Assuming ReportedContent has a 'reporters' array field (if not, you need to add it)
+    let alreadyReported = false;
+    if (reportedContent && Array.isArray(reportedContent.reporters)) {
+      alreadyReported = reportedContent.reporters.includes(userId);
+    }
+
     if (reportedContent) {
-      reportedContent.reports += 1;
-      await reportedContent.save();
+      if (!alreadyReported) {
+        reportedContent.reports += 1;
+        reportedContent.reporters = Array.isArray(reportedContent.reporters)
+          ? [...reportedContent.reporters, userId]
+          : [userId];
+        await reportedContent.save();
+      }
+      // else: user already reported, do not increment
     } else {
       // Step 4: Otherwise, create a new report record
       reportedContent = await ReportedContent.create({
         vehicleId: vehicleId,
         reports: 1,
+        reporters: [userId],
       });
+    }
+
+    // Emit notification to all admins
+    try {
+      const admins = await User.findAll({ where: { role: "admin" } });
+      const createAndEmitNotification = require("../../../Traits/CreateAndEmitNotification");
+      for (const admin of admins) {
+        await createAndEmitNotification(
+          {
+            senderId: userId,
+            receiverId: admin.id,
+            type: "report_vehicle",
+            content: `User ${userId} reported vehicle ${vehicleId}`,
+          },
+          io
+        );
+      }
+    } catch (notifErr) {
+      console.error("Error sending report notification to admins:", notifErr);
     }
 
     return json.successResponse(res, "Report recorded successfully.", 200);

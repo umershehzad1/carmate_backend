@@ -9,6 +9,7 @@ module.exports = (sequelize, DataTypes) => {
         as: "vehicle",
         onDelete: "CASCADE",
       });
+      // Removed User association
     }
   }
 
@@ -18,6 +19,11 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.INTEGER,
         allowNull: false,
         references: { model: "Vehicles", key: "id" },
+      },
+      reporters: {
+        type: DataTypes.ARRAY(DataTypes.INTEGER),
+        allowNull: false,
+        defaultValue: [],
       },
       reports: {
         type: DataTypes.INTEGER,
