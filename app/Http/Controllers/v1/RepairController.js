@@ -2,6 +2,7 @@
 
 const path = require("path");
 const fs = require("fs");
+const cloudinary = require("../../../Traits/Cloudinary");
 const slugify = require("slugify");
 const json = require("../../../Traits/ApiResponser"); // Your custom response helper
 const db = require("../../../Models/index");
@@ -101,16 +102,27 @@ o.updateRepairProfile = async function (req, res, next) {
     // Step 2: Prepare update data
     const updateData = { ...req.body };
 
-    // Step 3: Handle uploaded files from req.files
+    // Step 3: Handle uploaded files from req.files (Cloudinary)
     if (req.files && req.files.length > 0) {
-      // Construct full URLs with server address
-      const serverAddress = process.env.APP_URL;
       const finalImages = [];
-
-      req.files.forEach((file) => {
-        finalImages.push(`${serverAddress}/uploads/gallery/${file.filename}`);
-      });
-
+      for (const file of req.files) {
+        // Upload to Cloudinary
+        const uploadResult = (await cloudinary.uploader.upload_stream)
+          ? await new Promise((resolve, reject) => {
+              const stream = cloudinary.uploader.upload_stream(
+                { folder: "repair_gallery" },
+                (error, result) => {
+                  if (error) reject(error);
+                  else resolve(result);
+                }
+              );
+              stream.end(file.buffer);
+            })
+          : await cloudinary.uploader.upload(file.buffer, {
+              folder: "repair_gallery",
+            });
+        finalImages.push(uploadResult.secure_url);
+      }
       // Append new images to existing gallery array instead of replacing
       const existingGallery = Array.isArray(repair.gallery)
         ? repair.gallery

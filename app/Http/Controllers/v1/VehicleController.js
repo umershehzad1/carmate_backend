@@ -838,3 +838,54 @@ o.getAllMakes = async function (req, res, next) {
 };
 
 module.exports = o;
+
+// Admin: Delete vehicle and all related data
+o.adminDeleteVehicle = async function (req, res, next) {
+  try {
+    const { id } = req.params;
+    const { role } = req.decoded;
+    if (role !== "admin") {
+      return json.errorResponse(res, "Unauthorized access", 401);
+    }
+
+    // Find vehicle by ID
+    const vehicle = await Vehicle.findByPk(id);
+    if (!vehicle) {
+      return json.errorResponse(res, "Vehicle not found", 404);
+    }
+
+    // Delete all notifications related to test drive requests for this vehicle (do this first)
+    const TestDriveRequest = db.TestDriveRequest || db.TestDriveResuest;
+    const Notification = db.Notification || db.Notifications;
+    const testDriveRequests = await TestDriveRequest.findAll({
+      where: { vehicleId: id },
+    });
+    const testDriveRequestIds = testDriveRequests.map((r) => r.id);
+    if (Notification && testDriveRequestIds.length > 0) {
+      await Notification.destroy({
+        where: { testDriveRequestId: testDriveRequestIds },
+      });
+    }
+    // Now delete all test drive requests for this vehicle
+    await TestDriveRequest.destroy({ where: { vehicleId: id } });
+
+    // Delete all advertisements related to this vehicle
+    const Advertisement = db.Advertisement;
+    if (Advertisement) {
+      await Advertisement.destroy({ where: { vehicleId: id } });
+    }
+
+    // Delete all reports related to this vehicle
+    const ReportedContent = db.ReportedContent;
+    if (ReportedContent) {
+      await ReportedContent.destroy({ where: { vehicleId: id } });
+    }
+
+    // Delete the vehicle
+    await Vehicle.destroy({ where: { id } });
+
+    return json.successResponse(res, "Vehicle Removed successfully.", 200);
+  } catch (error) {
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};

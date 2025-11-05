@@ -102,5 +102,13 @@ router
     vehicleCtrl.updateVehicle
   );
 router.route("/:id").delete(authCtrl.authenticate, vehicleCtrl.deleteVehicle);
+// Admin route to delete vehicle and all related data
+router
+  .route("/admin/delete/:id")
+  .delete(
+    authCtrl.authenticate,
+    authCtrl.isAdmin,
+    vehicleCtrl.adminDeleteVehicle
+  );
 router.route("/getallvehiclesmodels/:make").get(vehicleCtrl.getModelsByMake);
 module.exports = router;

@@ -25,7 +25,7 @@ const o = {};
 
 o.createReport = async function (req, res, io) {
   try {
-    const { vehicleId } = req.body; // Vehicle ID
+    const { vehicleId, reportReason } = req.body; // Vehicle ID and reason
     const userId = req.decoded.id;
 
     // Step 1: Verify that the vehicle exists
@@ -34,35 +34,26 @@ o.createReport = async function (req, res, io) {
       return json.errorResponse(res, "Vehicle not found", 404);
     }
 
-    // Step 2: Check if a report already exists for this vehicle
-    let reportedContent = await ReportedContent.findOne({
-      where: { vehicleId: vehicleId },
+    // Step 2: Check if this user already reported this vehicle
+    let alreadyReported = await ReportedContent.findOne({
+      where: { vehicleId: vehicleId, userId: userId },
     });
 
-    // Step 2.5: Check if this user already reported this vehicle
-    // Assuming ReportedContent has a 'reporters' array field (if not, you need to add it)
-    let alreadyReported = false;
-    if (reportedContent && Array.isArray(reportedContent.reporters)) {
-      alreadyReported = reportedContent.reporters.includes(userId);
+    if (alreadyReported) {
+      return json.errorResponse(
+        res,
+        "You have already reported this vehicle.",
+        400
+      );
     }
 
-    if (reportedContent) {
-      if (!alreadyReported) {
-        reportedContent.reports += 1;
-        reportedContent.reporters = Array.isArray(reportedContent.reporters)
-          ? [...reportedContent.reporters, userId]
-          : [userId];
-        await reportedContent.save();
-      }
-      // else: user already reported, do not increment
-    } else {
-      // Step 4: Otherwise, create a new report record
-      reportedContent = await ReportedContent.create({
-        vehicleId: vehicleId,
-        reports: 1,
-        reporters: [userId],
-      });
-    }
+    // Step 3: Create a new report record for this user and vehicle
+    await ReportedContent.create({
+      vehicleId: vehicleId,
+      userId: userId,
+      reportReason: reportReason,
+      reports: 1,
+    });
 
     // Emit notification to all admins
     try {

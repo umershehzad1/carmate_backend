@@ -4,21 +4,6 @@ const fs = require("fs");
 const express = require("express");
 const multer = require("multer");
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const vehicleUploadsDir = path.join(__dirname, "../public/uploads/gallery");
-    // Ensure directory exists
-    if (!fs.existsSync(vehicleUploadsDir)) {
-      fs.mkdirSync(vehicleUploadsDir, { recursive: true });
-    }
-    cb(null, vehicleUploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname) || ".jpg";
-    cb(null, "gallery-" + uniqueSuffix + ext);
-  },
-});
 const imageFileFilter = (req, file, cb) => {
   const allowedMimes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
   if (allowedMimes.includes(file.mimetype)) {
@@ -28,7 +13,7 @@ const imageFileFilter = (req, file, cb) => {
   }
 };
 const uploadImages = multer({
-  storage: storage, // Use the disk storage configuration
+  storage: multer.memoryStorage(), // Use memory storage for Cloudinary
   fileFilter: imageFileFilter,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB per image
 });

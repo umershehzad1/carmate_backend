@@ -9,7 +9,12 @@ module.exports = (sequelize, DataTypes) => {
         as: "vehicle",
         onDelete: "CASCADE",
       });
-      // Removed User association
+
+      ReportedContent.belongsTo(models.User, {
+        foreignKey: "userId",
+        as: "user",
+        onDelete: "CASCADE",
+      });
     }
   }
 
@@ -20,14 +25,15 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         references: { model: "Vehicles", key: "id" },
       },
-      reporters: {
-        type: DataTypes.ARRAY(DataTypes.INTEGER),
+      userId: {
+        type: DataTypes.INTEGER,
         allowNull: false,
-        defaultValue: [],
+        references: { model: "Users", key: "id" },
       },
       reports: {
         type: DataTypes.INTEGER,
       },
+      reportReason: DataTypes.STRING,
     },
     {
       sequelize,
