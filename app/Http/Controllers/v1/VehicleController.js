@@ -837,8 +837,6 @@ o.getAllMakes = async function (req, res, next) {
   }
 };
 
-module.exports = o;
-
 // Admin: Delete vehicle and all related data
 o.adminDeleteVehicle = async function (req, res, next) {
   try {
@@ -889,3 +887,4 @@ o.adminDeleteVehicle = async function (req, res, next) {
     return json.errorResponse(res, error.message || error, 400);
   }
 };
+module.exports = o;
