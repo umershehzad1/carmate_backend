@@ -82,6 +82,135 @@ module.exports = (sequelize, DataTypes) => {
     {
       sequelize,
       modelName: "Vehicle",
+      hooks: {
+        afterUpdate: async (vehicle, options) => {
+          const changed = vehicle.changed();
+
+          // Check if status was changed
+          if (changed && changed.includes("status")) {
+            const { Advertisement, Notifications, TestDriveRequest, Dealer } =
+              sequelize.models;
+
+            // If status changed to 'live', create a base advertisement
+            if (vehicle.status === "live") {
+              // Check if a base ad already exists for this vehicle
+              const existingAd = await Advertisement.findOne({
+                where: {
+                  vehicleId: vehicle.id,
+                  adType: "base",
+                },
+              });
+
+              // Only create if no base ad exists
+              if (!existingAd) {
+                // Check dealer's available listings
+                const dealer = await Dealer.findOne({
+                  where: { userId: vehicle.dealerId },
+                });
+
+                if (dealer && dealer.availableCarListing > 0) {
+                  // Create the base ad
+                  await Advertisement.create({
+                    vehicleId: vehicle.id,
+                    dealerId: vehicle.dealerId,
+                    adType: "base",
+                    status: "running",
+                    pauseReason: "none",
+                    dailyBudget: 0.0,
+                    startDate: new Date(),
+                    endDate: null,
+                  });
+
+                  // Deduct one listing
+                  dealer.availableCarListing = dealer.availableCarListing - 1;
+                  await dealer.save();
+                }
+              }
+            }
+
+            // If status changed to 'sold' or 'draft', delete related data
+            if (vehicle.status === "sold" || vehicle.status === "draft") {
+              // Count how many ads will be deleted
+              const adsCount = await Advertisement.count({
+                where: { vehicleId: vehicle.id },
+              });
+
+              // Delete all advertisements for this vehicle
+              await Advertisement.destroy({
+                where: { vehicleId: vehicle.id },
+              });
+
+              // Restore the listings to dealer
+              if (adsCount > 0) {
+                const dealer = await Dealer.findOne({
+                  where: { userId: vehicle.dealerId },
+                });
+
+                if (dealer) {
+                  dealer.availableCarListing =
+                    dealer.availableCarListing + adsCount;
+                  await dealer.save();
+                }
+              }
+
+              // Delete all test drive requests for this vehicle
+              const testDriveRequests = await TestDriveRequest.findAll({
+                where: { vehicleId: vehicle.id },
+              });
+
+              // Delete notifications related to test drive requests
+              if (testDriveRequests && testDriveRequests.length > 0) {
+                const testDriveRequestIds = testDriveRequests.map(
+                  (tdr) => tdr.id
+                );
+                await Notifications.destroy({
+                  where: {
+                    testDriveRequestId: testDriveRequestIds,
+                  },
+                });
+              }
+
+              // Delete the test drive requests themselves
+              await TestDriveRequest.destroy({
+                where: { vehicleId: vehicle.id },
+              });
+
+              // You can also delete other related notifications if needed
+              // For example, notifications about this vehicle in general
+            }
+          }
+        },
+
+        afterCreate: async (vehicle, options) => {
+          // Automatically create a base ad when a vehicle is created with 'live' status
+          if (vehicle.status === "live") {
+            const { Advertisement, Dealer } = sequelize.models;
+
+            // Check dealer's available listings
+            const dealer = await Dealer.findOne({
+              where: { userId: vehicle.dealerId },
+            });
+
+            if (dealer && dealer.availableCarListing > 0) {
+              // Create the base ad
+              await Advertisement.create({
+                vehicleId: vehicle.id,
+                dealerId: vehicle.dealerId,
+                adType: "base",
+                status: "running",
+                pauseReason: "none",
+                dailyBudget: 0.0,
+                startDate: new Date(),
+                endDate: null,
+              });
+
+              // Deduct one listing
+              dealer.availableCarListing = dealer.availableCarListing - 1;
+              await dealer.save();
+            }
+          }
+        },
+      },
     }
   );
 

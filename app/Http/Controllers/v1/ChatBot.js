@@ -1,1379 +1,953 @@
-// Controller for AI-enabled chatbot for vehicle search, dealers, repairs, insurance
-const axios = require("axios");
-const { Sequelize } = require("sequelize");
-const json = require("../../../Traits/ApiResponser");
+// Production-grade AI chatbot with agent-based tool calling
+const { ChatOpenAI } = require("@langchain/openai");
+const { OpenAIEmbeddings } = require("@langchain/openai");
+const { Pinecone } = require("@pinecone-database/pinecone");
+const { PineconeStore } = require("@langchain/pinecone");
+const { DynamicStructuredTool } = require("@langchain/core/tools");
+const {
+  ChatPromptTemplate,
+  MessagesPlaceholder,
+} = require("@langchain/core/prompts");
+const { HumanMessage, AIMessage } = require("@langchain/core/messages");
+const { z } = require("zod");
+const { Op } = require("sequelize");
 const db = require("../../../Models/index");
-const Contact = db.Contact;
 const User = db.User;
 const Vehicle = db.Vehicle;
 const Advertisement = db.Advertisement;
 const Dealer = db.Dealer;
 const Repair = db.Repair;
 const Insurance = db.Insurance;
-let o = {};
-o.chatbot = async function (req, res) {
+const ChatbotLog = db.ChatbotLog;
+
+const { OPENAI_API_KEY, PINECONE_API_KEY, PINECONE_INDEX } = process.env;
+
+/* ---------- CONFIGURATION ---------- */
+const llm = new ChatOpenAI({
+  model: "gpt-4o-mini",
+  temperature: 0,
+  apiKey: OPENAI_API_KEY,
+  maxTokens: 2000, // Increase max tokens to allow longer responses
+  modelKwargs: {
+    response_format: { type: "text" },
+  },
+});
+
+// Session management with chat history
+const sessions = new Map();
+function getSession(id) {
+  if (!sessions.has(id)) {
+    sessions.set(id, {
+      chatHistory: [],
+      metadata: {},
+      lastSearch: {
+        type: null, // 'vehicles', 'dealers', 'repairs', 'insurance'
+        criteria: {},
+        offset: 0,
+        totalResults: 0,
+      },
+    });
+  }
+  return sessions.get(id);
+}
+
+/* ---------- PINECONE RAG SETUP ---------- */
+let vectorStore = null;
+let retriever = null;
+
+async function initializeRAG() {
+  if (vectorStore) return;
+
   try {
-    const { userId, message, conversationHistory = [] } = req.body;
+    const pinecone = new Pinecone({ apiKey: PINECONE_API_KEY });
+    const pineconeIndex = pinecone.Index(PINECONE_INDEX || "carmate");
+    const embeddings = new OpenAIEmbeddings({
+      model: "text-embedding-3-large",
+      apiKey: OPENAI_API_KEY,
+    });
 
-    if (!userId) {
-      return json.errorResponse(res, "Missing userId");
+    vectorStore = await PineconeStore.fromExistingIndex(embeddings, {
+      pineconeIndex,
+    });
+    retriever = vectorStore.asRetriever({ k: 3 });
+    console.log("[Chatbot] RAG initialized successfully");
+  } catch (error) {
+    console.error("[Chatbot] RAG initialization error:", error);
+    throw error;
+  }
+}
+
+/* ---------- TOOLS DEFINITION ---------- */
+
+/**
+ * Tool: Search Knowledge Base (Pinecone + RAG)
+ */
+const searchKnowledgeBaseTool = new DynamicStructuredTool({
+  name: "search_knowledge_base",
+  description:
+    "Search the Carmate knowledge base to answer questions about the platform, features, FAQs, how-to guides, policies, and general information. Use this when users ask 'What is Carmate?', 'How do I...?', 'What features...?', etc.",
+  schema: z.object({
+    query: z
+      .string()
+      .describe("The user's question to search in the knowledge base"),
+  }),
+  func: async ({ query }) => {
+    try {
+      await initializeRAG();
+      const docs = await retriever.invoke(query);
+
+      if (!docs || docs.length === 0) {
+        return "I couldn't find specific information about that in my knowledge base. Could you rephrase your question or ask about something else?";
+      }
+
+      const context = docs
+        .map((d, i) => `[Source ${i + 1}]\n${d.pageContent}`)
+        .join("\n\n");
+
+      const answerPrompt = `You are a helpful Carmate assistant. Answer the user's question using ONLY the provided context from the knowledge base.
+
+Question: ${query}
+
+Context from Knowledge Base:
+${context}
+
+Instructions:
+- Provide a clear, concise, and helpful answer
+- Only use information from the context above
+- If the context doesn't contain the answer, say "I don't have that information in my knowledge base"
+- Be friendly and professional
+- Format your response in a readable way
+
+Answer:`;
+
+      const response = await llm.invoke(answerPrompt);
+      return response.content;
+    } catch (error) {
+      console.error("[Tool] Knowledge base search error:", error);
+      return "I'm having trouble accessing the knowledge base right now. Please try again in a moment.";
     }
+  },
+});
 
-    // If no message and no conversation history, return greeting and menu
-    if (!message && conversationHistory.length === 0) {
-      return json.successResponse(res, {
-        messages: [
+/**
+ * Tool: Search Vehicle Advertisements
+ */
+function createSearchVehiclesTool(sessionId) {
+  return new DynamicStructuredTool({
+    name: "search_vehicles",
+    description:
+      "Search for vehicle advertisements in the database. Use this ONLY after collecting search criteria from the user. Required information: city/location and price range. Optional: make (brand), model, year. If user says 'show more', set showMore to true to see next page of results. DO NOT call this tool until you have at least city and price information from the user.",
+    schema: z.object({
+      make: z
+        .string()
+        .optional()
+        .describe("Vehicle make/brand (e.g., Toyota, Honda, Range Rover)"),
+      model: z
+        .string()
+        .optional()
+        .describe("Vehicle model (e.g., Camry, Civic, Mustang)"),
+      minPrice: z.number().optional().describe("Minimum price in dollars"),
+      maxPrice: z.number().optional().describe("Maximum price in dollars"),
+      year: z
+        .number()
+        .optional()
+        .describe("Manufacturing year (e.g., 2020, 2021)"),
+      city: z
+        .string()
+        .optional()
+        .describe("City location (e.g., Toronto, Vancouver, New York)"),
+      showMore: z
+        .boolean()
+        .optional()
+        .describe(
+          "Set to true if user wants to see more results from previous search"
+        ),
+    }),
+    func: async ({ make, model, minPrice, maxPrice, year, city, showMore }) => {
+      try {
+        const session = getSession(sessionId);
+        let offset = 0;
+
+        // If user wants to show more, use previous search criteria
+        if (showMore && session.lastSearch.type === "vehicles") {
+          offset = session.lastSearch.offset + 5;
+          make = session.lastSearch.criteria.make;
+          model = session.lastSearch.criteria.model;
+          minPrice = session.lastSearch.criteria.minPrice;
+          maxPrice = session.lastSearch.criteria.maxPrice;
+          year = session.lastSearch.criteria.year;
+          city = session.lastSearch.criteria.city;
+        } else {
+          // New search - reset offset
+          offset = 0;
+        }
+
+        // Build where clause for Advertisement and Vehicle
+        const advertisementWhereClause = { status: "running" };
+        const vehicleWhereClause = { status: "live" };
+
+        if (make) vehicleWhereClause.make = { [Op.iLike]: `%${make}%` };
+        if (model) vehicleWhereClause.model = { [Op.iLike]: `%${model}%` };
+        if (year) vehicleWhereClause.year = year.toString();
+        if (city) vehicleWhereClause.city = { [Op.iLike]: `%${city}%` };
+
+        // Add price filtering with CAST to handle string price column
+        if (minPrice !== undefined && maxPrice !== undefined) {
+          // Both min and max price specified
+          vehicleWhereClause[Op.and] = db.sequelize.where(
+            db.sequelize.cast(db.sequelize.col("vehicle.price"), "DECIMAL"),
+            { [Op.between]: [minPrice, maxPrice] }
+          );
+        } else if (minPrice !== undefined) {
+          // Only minimum price specified
+          vehicleWhereClause[Op.and] = db.sequelize.where(
+            db.sequelize.cast(db.sequelize.col("vehicle.price"), "DECIMAL"),
+            { [Op.gte]: minPrice }
+          );
+        } else if (maxPrice !== undefined) {
+          // Only maximum price specified
+          vehicleWhereClause[Op.and] = db.sequelize.where(
+            db.sequelize.cast(db.sequelize.col("vehicle.price"), "DECIMAL"),
+            { [Op.lte]: maxPrice }
+          );
+        }
+
+        // Count total results from Advertisement table
+        const totalCount = await Advertisement.count({
+          where: advertisementWhereClause,
+          include: [
+            {
+              model: Vehicle,
+              as: "vehicle",
+              where: vehicleWhereClause,
+              required: true,
+            },
+          ],
+          distinct: true,
+        });
+
+        // Search from Advertisement table and include Vehicle data
+        const advertisements = await Advertisement.findAll({
+          where: advertisementWhereClause,
+          include: [
+            {
+              model: Vehicle,
+              as: "vehicle",
+              where: vehicleWhereClause,
+              required: true,
+              include: [
+                {
+                  model: User,
+                  as: "user",
+                  attributes: ["id", "fullname", "email", "phone"],
+                },
+              ],
+            },
+          ],
+          limit: 5,
+          offset: offset,
+          order: [["createdAt", "DESC"]],
+          distinct: true,
+        });
+
+        // Store search info for pagination
+        session.lastSearch = {
+          type: "vehicles",
+          criteria: { make, model, minPrice, maxPrice, year, city },
+          offset: offset,
+          totalResults: totalCount,
+        };
+
+        if (!advertisements || advertisements.length === 0) {
+          if (offset > 0) {
+            return "No more vehicles found. That's all the results I have for your search.";
+          }
+
+          const criteria = [];
+          if (make) criteria.push(`make: ${make}`);
+          if (model) criteria.push(`model: ${model}`);
+          if (minPrice || maxPrice)
+            criteria.push(`price: $${minPrice || 0} - $${maxPrice || "any"}`);
+          if (year) criteria.push(`year: ${year}`);
+          if (city) criteria.push(`city: ${city}`);
+
+          return `I couldn't find any vehicles${
+            criteria.length > 0 ? ` matching (${criteria.join(", ")})` : ""
+          }. 
+
+Try:
+- Searching in a different city
+- Adjusting your price range
+- Looking for a different make or model`;
+        }
+
+        const results = advertisements
+          .map((ad, idx) => {
+            const vehicle = ad.vehicle;
+            const slug =
+              vehicle.slug ||
+              `${vehicle.make}-${vehicle.model}-${vehicle.year}`
+                .toLowerCase()
+                .replace(/\s+/g, "-");
+            const adId = ad.id;
+            const link = `[View Details](/car-details/${slug}?adId=${adId})`;
+
+            return `🚗 ${offset + idx + 1}. ${vehicle.make || "N/A"} ${
+              vehicle.model || "N/A"
+            } (${vehicle.year || "N/A"})
+   💰 Price: $${vehicle.price || "N/A"}
+   📏 Mileage: ${vehicle.mileage || "N/A"} km
+   ⚙️ Transmission: ${vehicle.transmission || "N/A"}
+   ✨ Condition: ${vehicle.condition || "N/A"}
+   📍 Location: ${vehicle.city || "N/A"}${
+     vehicle.province ? `, ${vehicle.province}` : ""
+   }
+   👤 Seller: ${vehicle.user?.fullname || "Dealer"}
+   ${link}`;
+          })
+          .join("\n\n");
+
+        // Build search description
+        const searchParts = [];
+        if (make) searchParts.push(make);
+        if (model) searchParts.push(model);
+        if (year) searchParts.push(`(${year})`);
+        if (city) searchParts.push(`in ${city}`);
+        if (minPrice || maxPrice) {
+          searchParts.push(
+            `priced $${minPrice || 0} - $${maxPrice || "unlimited"}`
+          );
+        }
+
+        const searchDescription =
+          searchParts.length > 0
+            ? `I found ${totalCount} ${searchParts.join(" ")} vehicle${
+                totalCount !== 1 ? "s" : ""
+              }`
+            : `I found ${totalCount} vehicle${totalCount !== 1 ? "s" : ""}`;
+
+        const showing = `${searchDescription}. Showing ${offset + 1}-${
+          offset + advertisements.length
+        }:`;
+        const moreInfo =
+          offset + advertisements.length < totalCount
+            ? "\n\nWant to see more? Just say 'show more vehicles' or 'more'!"
+            : "\n\nThat's all the vehicles matching your search.";
+
+        return `${showing}\n\n${results}${moreInfo}`;
+      } catch (error) {
+        console.error("[Tool] Vehicle search error:", error);
+        return "I encountered an error while searching for vehicles. Please try again.";
+      }
+    },
+  });
+}
+
+/**
+ * Tool: Search Dealers
+ */
+const searchDealersTool = new DynamicStructuredTool({
+  name: "search_dealers",
+  description:
+    "Search for car dealers and showrooms by location. Use this when users want to find dealers, showrooms, or car selling locations. The 'location' parameter is optional - if not provided, return general dealer information.",
+  schema: z.object({
+    location: z
+      .string()
+      .optional()
+      .describe(
+        "City/location name to search for dealers (e.g., Toronto, Vancouver)"
+      ),
+  }),
+  func: async ({ location }) => {
+    try {
+      const whereClause = { status: "verified" };
+      if (location) {
+        whereClause.location = { [Op.iLike]: `%${location}%` };
+      }
+
+      const dealers = await Dealer.findAll({
+        where: whereClause,
+        include: [
           {
-            type: "bot",
-            content:
-              "👋 Welcome to Carmate! I'm your AI assistant, here to help you with everything automotive.",
-          },
-          {
-            type: "bot",
-            content:
-              "How can I assist you today?\n\n1️⃣ 🚗 **Find Vehicles** - Search for cars based on your preferences\n2️⃣ 🏪 **Find Dealers** - Locate nearby car dealerships\n3️⃣ 🔧 **Find Repairs** - Find repair shops and mechanics\n4️⃣ 🛡️ **Find Insurance** - Get insurance recommendations\n\nJust let me know what you're looking for!",
+            model: User,
+            as: "user",
+            attributes: ["fullname", "email", "phone"],
           },
         ],
-        conversationHistory: [],
-        sessionStart: true,
+        limit: 5,
+        order: [["createdAt", "DESC"]],
+      });
+
+      if (!dealers || dealers.length === 0) {
+        return location
+          ? `No verified dealers found in ${location}. Try:\n- Searching in nearby cities\n- Checking the spelling\n- Browsing all dealer listings`
+          : "No dealers found. Please check back later.";
+      }
+
+      const results = dealers
+        .map((dealer, idx) => {
+          const slug = dealer.slug || `dealer-${dealer.id}`;
+          const link = `[View Profile](/dealer-details/${slug})`;
+
+          return `🏢 ${idx + 1}. Dealer in ${dealer.location || "N/A"}
+   👤 Contact: ${dealer.user?.fullname || "N/A"}${dealer.user?.phone ? ` - ${dealer.user.phone}` : ""}
+   📧 Email: ${dealer.user?.email || "N/A"}
+   🕐 Hours: ${dealer.openingTime || "N/A"} - ${dealer.closingTime || "N/A"}
+   ✓ Verified
+   ${link}`;
+        })
+        .join("\n\n");
+
+      return `Found ${dealers.length} verified dealer(s)${location ? ` in ${location}` : ""}:\n\n${results}`;
+    } catch (error) {
+      console.error("[Tool] Dealer search error:", error);
+      return "I encountered an error while searching for dealers. Please try again.";
+    }
+  },
+});
+
+/**
+ * Tool: Search Repair Shops
+ */
+const searchRepairShopsTool = new DynamicStructuredTool({
+  name: "search_repair_shops",
+  description:
+    "Search for auto repair shops and maintenance service centers by location. Use this when users need vehicle repairs, maintenance, or mechanic services. Location parameter is optional.",
+  schema: z.object({
+    location: z
+      .string()
+      .optional()
+      .describe(
+        "City/location name to search for repair shops (e.g., Toronto)"
+      ),
+  }),
+  func: async ({ location }) => {
+    try {
+      const whereClause = { status: "verified" };
+      if (location) {
+        whereClause.location = { [Op.iLike]: `%${location}%` };
+      }
+
+      const repairs = await Repair.findAll({
+        where: whereClause,
+        include: [
+          {
+            model: User,
+            as: "user",
+            attributes: ["fullname", "email", "phone"],
+          },
+        ],
+        limit: 5,
+        order: [["createdAt", "DESC"]],
+      });
+
+      if (!repairs || repairs.length === 0) {
+        return location
+          ? `No repair shops found in ${location}. Try nearby cities or check spelling.`
+          : "No repair shops found.";
+      }
+
+      const results = repairs
+        .map((shop, idx) => {
+          const specialty =
+            shop.specialty && Array.isArray(shop.specialty)
+              ? shop.specialty.join(", ")
+              : "General repairs";
+
+          const slug = shop.slug || `repair-${shop.id}`;
+          const link = `[View Details](/repair-details/${slug})`;
+
+          return `🔧 ${idx + 1}. Repair Shop in ${shop.location || "N/A"}
+   🛠️ Specialty: ${specialty}
+   💼 Experience: ${shop.experience || "N/A"} years
+   👤 Contact: ${shop.user?.fullname || "N/A"}${shop.user?.phone ? ` - ${shop.user.phone}` : ""}
+   🕐 Hours: ${shop.openingTime || "N/A"} - ${shop.closingTime || "N/A"}
+   ${link}`;
+        })
+        .join("\n\n");
+
+      return `Found ${repairs.length} repair shop(s)${location ? ` in ${location}` : ""}:\n\n${results}`;
+    } catch (error) {
+      console.error("[Tool] Repair shop search error:", error);
+      return "I encountered an error while searching for repair shops. Please try again.";
+    }
+  },
+});
+
+/**
+ * Tool: Search Insurance Providers
+ */
+const searchInsuranceTool = new DynamicStructuredTool({
+  name: "search_insurance",
+  description:
+    "Search for vehicle insurance providers by location. Use this when users are looking for car insurance, auto insurance quotes, or insurance providers. Location parameter is optional.",
+  schema: z.object({
+    location: z
+      .string()
+      .optional()
+      .describe(
+        "City/location name to search for insurance providers (e.g., Toronto)"
+      ),
+  }),
+  func: async ({ location }) => {
+    try {
+      const whereClause = { status: "verified" };
+      if (location) {
+        whereClause.location = { [Op.iLike]: `%${location}%` };
+      }
+
+      const insurances = await Insurance.findAll({
+        where: whereClause,
+        include: [
+          {
+            model: User,
+            as: "user",
+            attributes: ["fullname", "email", "phone"],
+          },
+        ],
+        limit: 5,
+        order: [["createdAt", "DESC"]],
+      });
+
+      if (!insurances || insurances.length === 0) {
+        return location
+          ? `No insurance providers found in ${location}. Try nearby cities or check spelling.`
+          : "No insurance providers found.";
+      }
+
+      const results = insurances
+        .map((ins, idx) => {
+          const speciality =
+            ins.speciality && Array.isArray(ins.speciality)
+              ? ins.speciality.join(", ")
+              : "Auto insurance";
+
+          const slug = ins.slug || `insurance-${ins.id}`;
+          const link = `[View Details](/insurance-details/${slug})`;
+
+          return `🛡️ ${idx + 1}. Insurance Provider in ${ins.location || "N/A"}
+   📋 Speciality: ${speciality}
+   💼 Experience: ${ins.experience || "N/A"} years
+   👤 Contact: ${ins.user?.fullname || "N/A"}${ins.user?.phone ? ` - ${ins.user.phone}` : ""}
+   🕐 Hours: ${ins.openingTime || "N/A"} - ${ins.closingTime || "N/A"}
+   ${link}`;
+        })
+        .join("\n\n");
+
+      return `Found ${insurances.length} insurance provider(s)${location ? ` in ${location}` : ""}:\n\n${results}`;
+    } catch (error) {
+      console.error("[Tool] Insurance search error:", error);
+      return "I encountered an error while searching for insurance providers. Please try again.";
+    }
+  },
+});
+
+/* ---------- AGENT SETUP ---------- */
+
+async function initializeAgent(sessionId) {
+  // Create session-aware tools
+  const tools = [
+    searchKnowledgeBaseTool,
+    createSearchVehiclesTool(sessionId),
+    searchDealersTool,
+    searchRepairShopsTool,
+    searchInsuranceTool,
+  ];
+
+  // System prompt for the agent
+  const systemPrompt = `You are Carmate Assistant, a helpful and friendly AI assistant for the Carmate vehicle marketplace platform.
+
+**Your Role:**
+- Help users find vehicles, dealers, repair shops, and insurance providers
+- Answer questions about the Carmate platform using the knowledge base
+- Be conversational, friendly, and professional
+- Provide accurate information using the available tools
+- Collect all necessary search criteria before performing a search
+
+**Available Tools:**
+1. search_knowledge_base: Answer questions about Carmate platform, features, FAQs, policies
+2. search_vehicles: Find vehicles for sale (search by make, model, price, year, city - all optional). If user says "show more", set showMore to true.
+3. search_dealers: Find car dealers in a specific location
+4. search_repair_shops: Find auto repair shops in a specific location
+5. search_insurance: Find insurance providers in a specific city
+
+**Guidelines for Vehicle Search:**
+- When users want to search for cars, ask for important details BEFORE calling the search tool:
+  * What city/location are they looking in?
+  * Do they have a preferred make/brand? (e.g., Toyota, Honda, BMW)
+  * Do they have a preferred model? (optional)
+  * What's their budget/price range?
+  * Any preference for year? (optional)
+- Ask these questions in a friendly, conversational way
+- Collect at least city and price range before searching
+- Example: "I'd be happy to help you find a car! To show you the best options, could you tell me: 1) Which city are you looking in? 2) What's your budget range?"
+- Only call search_vehicles tool AFTER you have collected the necessary information
+- If user says "show more", "more results", "next", set showMore parameter to true in the search tool
+
+**Guidelines for Other Searches:**
+- For greetings, respond warmly and mention what you can help with
+- Extract search parameters intelligently from user messages
+- If a tool returns no results, suggest alternatives
+- Always be helpful and guide users to the right information
+- Keep responses clear, concise, and well-formatted
+
+**Important:**
+- ALWAYS return the COMPLETE tool response to the user - don't summarize or truncate it
+- When a tool returns vehicle listings, show ALL of them in your response
+- Don't call search_vehicles until you have at least city and price information from the user
+- If you don't know something, check the knowledge base first
+- When user says "show more", use the same tool with showMore=true
+- The tool response already includes a properly formatted introduction - just pass it through
+- Never cut off or summarize the vehicle listings - show the complete tool output
+
+Remember: Ask for details first, then search with complete criteria and return the FULL tool response!`;
+
+  const prompt = ChatPromptTemplate.fromMessages([
+    ["system", systemPrompt],
+    new MessagesPlaceholder("chat_history"),
+    ["human", "{input}"],
+  ]);
+
+  // Bind tools to the model for function calling
+  const modelWithTools = llm.bindTools(tools);
+
+  // Return executor with tools
+  return {
+    modelWithTools,
+    tools,
+    prompt,
+  };
+}
+
+/* ---------- HELPER FUNCTIONS FOR LOGGING ---------- */
+/**
+ * Detect intent from user message and tool calls
+ */
+function detectIntent(message, toolCalls, toolResults) {
+  const lowerMessage = message.toLowerCase();
+
+  // Check tool calls first (most reliable)
+  if (toolCalls && toolCalls.length > 0) {
+    const toolName = toolCalls[0].name;
+    if (toolName === "search_vehicles") return "search_cars";
+    if (toolName === "search_repair_shops") return "repair_request";
+    if (toolName === "search_insurance_providers") return "insurance_request";
+  }
+
+  // Keyword-based detection
+  if (
+    lowerMessage.match(
+      /\b(car|vehicle|buy|price|make|model|honda|toyota|ford|suv|sedan)\b/i
+    )
+  ) {
+    return "search_cars";
+  }
+  if (
+    lowerMessage.match(/\b(repair|mechanic|fix|garage|service|maintenance)\b/i)
+  ) {
+    return "repair_request";
+  }
+  if (lowerMessage.match(/\b(insurance|insure|coverage|policy)\b/i)) {
+    return "insurance_request";
+  }
+  if (
+    lowerMessage.match(
+      /\b(how|what|when|where|can i|help|guide|post|ad|advertisement)\b/i
+    )
+  ) {
+    return "faq";
+  }
+
+  return "general";
+}
+
+/**
+ * Extract context from tool calls and results
+ */
+function extractContext(message, toolCalls, toolResults, ragUsed) {
+  const context = {
+    rag_used: ragUsed || false,
+    tool_calls: [],
+  };
+
+  if (toolCalls && toolCalls.length > 0) {
+    toolCalls.forEach((toolCall, idx) => {
+      context.tool_calls.push({
+        tool: toolCall.name,
+        args: toolCall.args,
+        result_preview:
+          toolResults && toolResults[idx]
+            ? toolResults[idx].substring(0, 200) + "..."
+            : null,
+      });
+    });
+  }
+
+  return context;
+}
+
+/**
+ * Log chatbot conversation asynchronously (non-blocking)
+ */
+async function logConversation(
+  sessionId,
+  userId,
+  message,
+  response,
+  intent,
+  context
+) {
+  // Run asynchronously without blocking the response
+  setImmediate(async () => {
+    try {
+      await ChatbotLog.create({
+        session_id: sessionId,
+        user_id: userId || null,
+        intent: intent || "general",
+        message: message,
+        response: response,
+        context: context || {},
+        feedback: "neutral",
+      });
+      console.log(`[ChatbotLog] Logged conversation for session: ${sessionId}`);
+    } catch (logError) {
+      console.error("[ChatbotLog] Error logging conversation:", logError);
+      // Don't throw - logging failures shouldn't affect user experience
+    }
+  });
+}
+
+/* ---------- MAIN CHATBOT CONTROLLER ---------- */
+exports.chatbot = async (req, res) => {
+  try {
+    const { session_id, message, stream = true } = req.body;
+
+    // Validation
+    if (!session_id || !message) {
+      return res.status(400).json({
+        error: "Missing required fields",
+        message:
+          "I'm unable to connect. Please refresh the page and try again.",
+        success: false,
       });
     }
 
-    if (!message) {
-      return json.errorResponse(res, "Missing message");
+    if (typeof message !== "string" || message.trim().length === 0) {
+      return res.status(400).json({
+        error: "Invalid message",
+        message: "Please enter a valid message and try again.",
+        success: false,
+      });
     }
 
-    // Correct spelling in the message
-    const correctedMessage = await correctSpelling(message);
-    console.log("Original message:", message);
-    console.log("Corrected message:", correctedMessage);
+    // Get user ID from request (if authenticated)
+    const userId = req.user?.id || null;
 
-    // Analyze user intent using AI
-    const userMessageLower = correctedMessage.toLowerCase();
-    let intent = await analyzeUserIntent(userMessageLower);
+    // Initialize systems
+    await initializeRAG();
+    const executor = await initializeAgent(session_id);
 
-    // Check if user explicitly mentions what they want (vehicle, dealer, repair, insurance)
-    const hasExplicitIntent =
-      /\b(vehicle|vehicles|car|cars|auto|automobile|dealer|dealers|dealership|dealerships|showroom|showrooms|repair|repairs|mechanic|mechanics|service|fix|maintenance|insurance|coverage|policy|policies)\b/i.test(
-        userMessageLower
+    // Get session
+    const session = getSession(session_id);
+
+    // Prepare chat history for the agent
+    const chatHistory = session.chatHistory
+      .slice(-10)
+      .map((msg) =>
+        msg.role === "user"
+          ? new HumanMessage(msg.content)
+          : new AIMessage(msg.content)
       );
 
-    // Check if message is just about changing location (e.g., "now in Calgary")
-    // This pattern suggests continuing the previous search type with a new location
-    // BUT only if user didn't explicitly mention what they want
-    const locationChangePattern =
-      /\b(now|also|what about|how about)\b.*\b(in|at|near|around|for)\s+[a-z\s]+/i;
-    const justLocationPattern =
-      /^\b(in|at|near|around|for)\s+[a-z\s]+\b(now|today|please)?$/i;
+    console.log(`[Chatbot] Session: ${session_id}, Message: "${message}"`);
 
-    if (
-      !hasExplicitIntent && // Only maintain context if user didn't explicitly say what they want
-      (locationChangePattern.test(userMessageLower) ||
-        justLocationPattern.test(userMessageLower))
-    ) {
-      // Check previous 3 messages for context to maintain search type
-      const recentMessages = conversationHistory.slice(-6); // Last 6 messages (3 user + 3 bot)
+    // Execute agent with manual tool calling
+    const messages = await executor.prompt.formatMessages({
+      input: message,
+      chat_history: chatHistory,
+    });
 
-      for (let i = recentMessages.length - 1; i >= 0; i--) {
-        const historyMsg = recentMessages[i];
-        if (historyMsg.role === "user" || historyMsg.role === "bot") {
-          // Check what the previous conversation was about
-          if (/dealer|dealership|showroom/i.test(historyMsg.content)) {
-            console.log(
-              "Maintaining dealer search context from previous messages"
-            );
-            intent = {
-              category: "dealer_search",
-              type: "dealer_search",
-              confidence: 0.95,
-            };
-            break;
-          } else if (
-            /repair|mechanic|service|fix|maintenance/i.test(historyMsg.content)
-          ) {
-            console.log(
-              "Maintaining repair search context from previous messages"
-            );
-            intent = {
-              category: "repair_search",
-              type: "repair_search",
-              confidence: 0.95,
-            };
-            break;
-          } else if (/insurance|coverage|policy/i.test(historyMsg.content)) {
-            console.log(
-              "Maintaining insurance search context from previous messages"
-            );
-            intent = {
-              category: "insurance_search",
-              type: "insurance_search",
-              confidence: 0.95,
-            };
-            break;
+    // Get response from model with tools
+    const aiMessage = await executor.modelWithTools.invoke(messages);
+
+    // Check if model wants to call tools
+    let finalResponse = aiMessage.content;
+    let toolCallsData = aiMessage.tool_calls || [];
+    let toolResults = [];
+
+    if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
+      // Execute tool calls
+      for (const toolCall of aiMessage.tool_calls) {
+        const tool = executor.tools.find((t) => t.name === toolCall.name);
+        if (tool) {
+          try {
+            const toolResult = await tool.invoke(toolCall.args);
+            toolResults.push(toolResult);
+            // For now, use the tool result as the final response
+            // In a more complex setup, you'd feed this back to the model
+            finalResponse = toolResult;
+          } catch (toolError) {
+            console.error(`[Chatbot] Tool execution error:`, toolError);
+            finalResponse =
+              "I encountered an error while searching. Please try again.";
           }
         }
       }
     }
 
-    // Check if user is just providing location/details without specifying what they're looking for
-    // Look at last 1-3 messages to understand context
-    if (intent.category === "general_help" || intent.confidence < 0.7) {
-      const locationOnlyPattern =
-        /\b(in|at|near|around|for|find)\s+[a-z\s]+\b(now|today|please)?\b/i;
-      const simpleLocationPattern = /^[a-z\s]+(now|today|please)?$/i;
+    const response = finalResponse;
 
-      if (
-        locationOnlyPattern.test(userMessageLower) ||
-        simpleLocationPattern.test(userMessageLower)
-      ) {
-        // Check previous 3 messages for context
-        const recentMessages = conversationHistory.slice(-6); // Last 6 messages (3 user + 3 bot)
+    // Detect intent and extract context for logging
+    const intent = detectIntent(message, toolCallsData, toolResults);
+    const context = extractContext(message, toolCallsData, toolResults, true);
 
-        for (let i = recentMessages.length - 1; i >= 0; i--) {
-          const historyMsg = recentMessages[i];
-          if (historyMsg.role === "user" || historyMsg.role === "bot") {
-            // Check what the previous conversation was about
-            if (/dealer|dealership|showroom/i.test(historyMsg.content)) {
-              intent = {
-                category: "dealer_search",
-                type: "dealer_search",
-                confidence: 0.9,
-              };
-              console.log("Detected dealer search from context");
-              break;
-            } else if (
-              /repair|mechanic|service|fix|maintenance/i.test(
-                historyMsg.content
-              )
-            ) {
-              intent = {
-                category: "repair_search",
-                type: "repair_search",
-                confidence: 0.9,
-              };
-              console.log("Detected repair search from context");
-              break;
-            } else if (/insurance|coverage|policy/i.test(historyMsg.content)) {
-              intent = {
-                category: "insurance_search",
-                type: "insurance_search",
-                confidence: 0.9,
-              };
-              console.log("Detected insurance search from context");
-              break;
-            }
-          }
-        }
-      }
-    }
+    // Log conversation asynchronously (non-blocking)
+    logConversation(session_id, userId, message, response, intent, context);
 
-    // FINAL OVERRIDE: Check if user explicitly mentions what they want
-    // This takes ABSOLUTE priority over AI classification and conversation context
-    // Must be checked LAST to ensure it overrides everything else
-    if (
-      /\b(vehicle|vehicles|car|cars|auto|automobile)\b/i.test(userMessageLower)
-    ) {
-      console.log(
-        "🚗 Explicit VEHICLE search detected - FORCING vehicle_search"
-      );
-      intent = {
-        category: "vehicle_search",
-        type: "vehicle_search",
-        confidence: 1.0,
-      };
-    } else if (
-      /\b(dealer|dealers|dealership|dealerships|showroom|showrooms)\b/i.test(
-        userMessageLower
-      )
-    ) {
-      console.log("🏪 Explicit DEALER search detected - FORCING dealer_search");
-      intent = {
-        category: "dealer_search",
-        type: "dealer_search",
-        confidence: 1.0,
-      };
-    } else if (
-      /\b(repair|repairs|mechanic|mechanics|garage|garages)\b/i.test(
-        userMessageLower
-      )
-    ) {
-      console.log("🔧 Explicit REPAIR search detected - FORCING repair_search");
-      intent = {
-        category: "repair_search",
-        type: "repair_search",
-        confidence: 1.0,
-      };
-    } else if (
-      /\b(insurance|coverage|policy|policies)\b/i.test(userMessageLower)
-    ) {
-      console.log(
-        "🛡️ Explicit INSURANCE search detected - FORCING insurance_search"
-      );
-      intent = {
-        category: "insurance_search",
-        type: "insurance_search",
-        confidence: 1.0,
-      };
-    }
-
-    console.log(
-      "Final intent decision:",
-      intent.category,
-      "- Confidence:",
-      intent.confidence
+    // Update session history
+    session.chatHistory.push(
+      { role: "user", content: message },
+      { role: "assistant", content: response }
     );
 
-    let botResponse = {};
-    let contextData = {
-      intent: intent.type,
-      category: intent.category,
-    };
-
-    switch (intent.category) {
-      case "vehicle_search":
-        botResponse = await handleVehicleSearch(
-          correctedMessage,
-          conversationHistory
-        );
-        break;
-
-      case "dealer_search":
-        botResponse = await handleDealerSearch(
-          correctedMessage,
-          conversationHistory
-        );
-        break;
-
-      case "repair_search":
-        botResponse = await handleRepairSearch(
-          correctedMessage,
-          conversationHistory
-        );
-        break;
-
-      case "insurance_search":
-        botResponse = await handleInsuranceSearch(
-          correctedMessage,
-          conversationHistory
-        );
-        break;
-
-      case "general_help":
-      default:
-        botResponse = await generateAIResponse(
-          correctedMessage,
-          conversationHistory,
-          intent
-        );
+    // Limit history size
+    if (session.chatHistory.length > 20) {
+      session.chatHistory = session.chatHistory.slice(-20);
     }
 
-    // Add user message to history
-    const updatedHistory = [
-      ...conversationHistory,
-      { role: "user", content: message },
-    ];
+    console.log(`[Chatbot] Response generated (${response.length} chars)`);
 
-    return json.successResponse(res, {
-      message: botResponse.content || botResponse.bot,
-      type: botResponse.type || "text",
-      data: botResponse.data || null,
-      contextData,
-      conversationHistory: updatedHistory,
+    // If streaming is enabled, stream the response
+    if (stream) {
+      // Set headers for Server-Sent Events
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      // Stream the response word by word or character by character
+      const words = response.split(" ");
+
+      for (let i = 0; i < words.length; i++) {
+        const word = words[i] + (i < words.length - 1 ? " " : "");
+
+        // Send chunk
+        res.write(
+          `data: ${JSON.stringify({
+            chunk: word,
+            done: false,
+            session_id,
+          })}\n\n`
+        );
+
+        // Add small delay between words for streaming effect (adjust for speed)
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+
+      // Send final message
+      res.write(
+        `data: ${JSON.stringify({
+          chunk: "",
+          done: true,
+          session_id,
+          fullMessage: response,
+        })}\n\n`
+      );
+
+      res.end();
+    } else {
+      // Non-streaming response (backward compatibility)
+      return res.json({
+        reply: response,
+        session_id,
+        success: true,
+      });
+    }
+  } catch (error) {
+    console.error("[Chatbot] Error:", error);
+
+    // User-friendly error message
+    let errorMessage =
+      "I'm having trouble responding right now. Please try again.";
+
+    if (error.message?.includes("API key")) {
+      errorMessage =
+        "I'm unable to connect. Please refresh the page and try again.";
+    } else if (error.message?.includes("rate limit")) {
+      errorMessage =
+        "I'm receiving too many requests right now. Please try again in a moment.";
+    } else if (error.message?.includes("session")) {
+      errorMessage =
+        "I'm unable to connect. Please refresh the page and try again.";
+    }
+
+    return res.status(500).json({
+      error: "Internal server error",
+      message: errorMessage,
+      details:
+        process.env.NODE_ENV === "development" ? error.message : undefined,
+      success: false,
     });
-  } catch (err) {
-    console.error("Chatbot error:", err);
-    return json.errorResponse(res, "Unable to process your request");
   }
 };
 
-// Correct spelling mistakes in user message
-async function correctSpelling(message) {
+/* ---------- FEEDBACK ENDPOINT ---------- */
+exports.submitFeedback = async (req, res) => {
   try {
-    const correctionPrompt = `Correct any spelling mistakes in this message. Keep the same meaning and tone. Only fix spelling errors, don't change the wording.
-    
-    Message: "${message}"
-    
-    Return ONLY the corrected message text, nothing else.`;
+    const { session_id, message_index, feedback } = req.body;
 
-    const response = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages: [{ role: "user", content: correctionPrompt }],
-        max_tokens: 150,
-        temperature: 0.1,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    const corrected = response.data.choices[0].message.content.trim();
-    // Remove quotes if AI wrapped the response in quotes
-    return corrected.replace(/^["']|["']$/g, "");
-  } catch (err) {
-    console.error("Spell correction error:", err);
-    // If spell correction fails, return original message
-    return message;
-  }
-}
-
-// Analyze user intent using AI
-async function analyzeUserIntent(message) {
-  try {
-    const systemPrompt = `You are an intent classifier for a car marketplace chatbot. Classify the user's message into one of these categories:
-    
-    1. "vehicle_search" - User wants to find, search, or browse vehicles/cars
-    2. "dealer_search" - User wants to find dealerships, showrooms, or sellers
-    3. "repair_search" - User wants to find repair shops, mechanics, or maintenance services
-    4. "insurance_search" - User wants insurance information or recommendations
-    5. "general_help" - General questions or other inquiries
-    
-    Respond ONLY with valid JSON in this format:
-    {"category": "vehicle_search|dealer_search|repair_search|insurance_search|general_help", "confidence": 0.95}`;
-
-    const response = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: message },
-        ],
-        max_tokens: 100,
-        temperature: 0.3,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    let content = response.data.choices[0].message.content.trim();
-
-    // Remove markdown code blocks if present
-    if (content.startsWith("```json")) {
-      content = content.replace(/```json\s*/g, "").replace(/```\s*$/g, "");
-    } else if (content.startsWith("```")) {
-      content = content.replace(/```\s*/g, "");
-    }
-
-    const parsed = JSON.parse(content);
-
-    return {
-      type: parsed.category,
-      category: parsed.category,
-      confidence: parsed.confidence,
-    };
-  } catch (err) {
-    console.error("Intent analysis error:", err);
-    return { type: "general_help", category: "general_help", confidence: 0 };
-  }
-}
-
-// Handle vehicle search
-async function handleVehicleSearch(message, conversationHistory) {
-  try {
-    // Extract vehicle preferences using AI
-    const extractionPrompt = `Extract vehicle preferences from this message. Return JSON with these fields (use null if not mentioned):
-    {"make": "brand or null", "model": "model or null", "maxPrice": "number or null", "minPrice": "number or null", "city": "city or null", "bodyType": "SUV|Sedan|Truck or null", "year": "year or null"}
-    
-    User message: "${message}"
-    
-    Return ONLY valid JSON.`;
-
-    const extractionResponse = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages: [{ role: "user", content: extractionPrompt }],
-        max_tokens: 200,
-        temperature: 0.3,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    let preferences;
-    try {
-      let content = extractionResponse.data.choices[0].message.content.trim();
-
-      // Remove markdown code blocks if present
-      if (content.startsWith("```json")) {
-        content = content.replace(/```json\s*/g, "").replace(/```\s*$/g, "");
-      } else if (content.startsWith("```")) {
-        content = content.replace(/```\s*/g, "");
-      }
-
-      preferences = JSON.parse(content);
-    } catch (jsonErr) {
-      console.error(
-        "Vehicle search: Failed to parse preferences JSON:",
-        extractionResponse.data.choices[0].message.content
-      );
-      throw jsonErr;
-    }
-
-    // Check if we have enough info - at least ONE search criterion is required
-    const hasAtLeastOneCriteria =
-      preferences.make ||
-      preferences.model ||
-      preferences.maxPrice ||
-      preferences.minPrice ||
-      preferences.city ||
-      preferences.bodyType ||
-      preferences.year;
-
-    if (!hasAtLeastOneCriteria) {
-      // Generate varied follow-up messages asking for search criteria
-      const followUpMessages = [
-        "I'd love to help you find a vehicle! Could you tell me what kind of car you're looking for? For example, the make, model, price range, or location?",
-        "Great! Let me help you search for vehicles. What are you interested in? You can tell me the brand, budget, or city where you're looking.",
-        "I'm here to help! To find the perfect vehicle for you, could you share some details? Like the make, price range, or which city you're searching in?",
-        "Sure! To get started with your vehicle search, please tell me more - what's your budget, preferred brand, or location?",
-        "I can help you find vehicles! Please share at least one preference: make/model, price range, city, body type, or year.",
-      ];
-
-      const randomMessage =
-        followUpMessages[Math.floor(Math.random() * followUpMessages.length)];
-
-      return {
-        content: randomMessage,
-        type: "follow_up",
-        data: { preferences, needsMoreInfo: true },
-      };
-    }
-
-    // Build database query for vehicles (searches via ads)
-    const vehicleWhere = {};
-
-    if (preferences.make) {
-      vehicleWhere.make = { [Sequelize.Op.iLike]: `%${preferences.make}%` };
-    }
-    if (preferences.model) {
-      vehicleWhere.model = { [Sequelize.Op.iLike]: `%${preferences.model}%` };
-    }
-    if (preferences.city) {
-      vehicleWhere.city = { [Sequelize.Op.iLike]: `%${preferences.city}%` };
-    }
-    if (preferences.bodyType) {
-      vehicleWhere.bodyType = preferences.bodyType;
-    }
-
-    // Note: Price filtering will be done after fetching since price might be stored as string
-    // We'll filter in JavaScript to ensure proper numeric comparison
-
-    if (preferences.year) {
-      vehicleWhere.year = preferences.year.toString();
-    }
-
-    // Debug: Log preferences and where clause
-    console.log("Vehicle search preferences:", preferences);
-    console.log("Vehicle search where clause:", vehicleWhere);
-
-    // Query advertisements with running status and include associated vehicle
-    let advertisements;
-    try {
-      advertisements = await Advertisement.findAll({
-        where: {
-          status: "running",
-        },
-        include: [
-          {
-            model: Vehicle,
-            as: "vehicle",
-            where: vehicleWhere,
-            required: true,
-          },
-        ],
-        limit: 20, // Increased limit since we'll filter by price in JavaScript
-        order: [["createdAt", "DESC"]],
-      });
-    } catch (dbErr) {
-      console.error("Vehicle search DB error:", dbErr);
-      throw dbErr;
-    }
-
-    // Filter by price in JavaScript to handle string/number comparison correctly
-    if (
-      advertisements &&
-      advertisements.length > 0 &&
-      (preferences.maxPrice || preferences.minPrice)
-    ) {
-      advertisements = advertisements.filter((ad) => {
-        const vehiclePrice = parseFloat(ad.vehicle.price);
-
-        // Skip if price is not a valid number
-        if (isNaN(vehiclePrice)) {
-          console.log(
-            `Skipping vehicle with invalid price: ${ad.vehicle.price}`
-          );
-          return false;
-        }
-
-        // Check max price
-        if (
-          preferences.maxPrice &&
-          vehiclePrice > parseFloat(preferences.maxPrice)
-        ) {
-          console.log(
-            `Vehicle price ${vehiclePrice} exceeds max ${preferences.maxPrice}`
-          );
-          return false;
-        }
-
-        // Check min price
-        if (
-          preferences.minPrice &&
-          vehiclePrice < parseFloat(preferences.minPrice)
-        ) {
-          console.log(
-            `Vehicle price ${vehiclePrice} below min ${preferences.minPrice}`
-          );
-          return false;
-        }
-
-        console.log(`Vehicle price ${vehiclePrice} matches criteria`);
-        return true;
+    // Validation
+    if (!session_id || feedback === undefined) {
+      return res.status(400).json({
+        error: "Missing required fields",
+        message: "session_id and feedback are required",
       });
     }
 
-    // Limit to top 5 results after price filtering
-    if (advertisements.length > 5) {
-      advertisements = advertisements.slice(0, 5);
-    }
-
-    if (!advertisements || advertisements.length === 0) {
-      // Generate empathetic no-results message
-      const noResultsMessages = [
-        `I couldn't find any ${preferences.make || "vehicles"} matching your criteria${preferences.city ? ` in ${preferences.city}` : ""}. Would you like to try different search criteria?`,
-        `Sorry, no ${preferences.make || "vehicles"} available${preferences.city ? ` in ${preferences.city}` : ""} at the moment. Can I help you search for something else?`,
-        `Unfortunately, I don't see any ${preferences.make || "vehicles"} that match your requirements${preferences.city ? ` in ${preferences.city}` : ""}. Try adjusting your budget or location?`,
-      ];
-
-      const randomNoResultMessage =
-        noResultsMessages[Math.floor(Math.random() * noResultsMessages.length)];
-
-      return {
-        content: randomNoResultMessage,
-        type: "no_results",
-        data: { vehicles: [], preferences },
-      };
-    }
-
-    // Format vehicle results with vehicle names like "2020 Range Rover"
-    const formattedVehicles = advertisements.map((ad) => {
-      const v = ad.vehicle;
-      const vehicleName =
-        `${v.year || ""} ${v.make || ""} ${v.model || ""}`.trim();
-
-      // Create a short description (max 100 chars)
-      let shortDescription = v.description || "";
-      if (shortDescription.length > 100) {
-        shortDescription = shortDescription.substring(0, 100) + "...";
-      }
-
-      // Generate a brief auto-description if no description exists
-      if (!shortDescription) {
-        const features = [];
-        if (v.mileage) features.push(`${v.mileage} km`);
-        if (v.transmission) features.push(v.transmission);
-        if (v.fuelType) features.push(v.fuelType);
-        if (v.condition) features.push(v.condition);
-
-        shortDescription = features.join(" • ") || "Great vehicle available";
-      }
-
-      return {
-        id: v.id,
-        adId: ad.id,
-        slug: v.slug,
-        vehicleName: vehicleName,
-        make: v.make,
-        model: v.model,
-        year: v.year,
-        price: v.price,
-        city: v.city,
-        bodyType: v.bodyType,
-        mileage: v.mileage,
-        transmission: v.transmission,
-        fuelType: v.fuelType,
-        condition: v.condition,
-        image:
-          Array.isArray(v.images) && v.images.length > 0 ? v.images[0] : null,
-        description: v.description,
-        shortDescription: shortDescription,
-        detailsUrl: `/car-details/${v.slug}?adId=${ad.id}`,
-      };
-    });
-
-    // Build context message based on search criteria
-    let contextParts = [];
-    if (preferences.city) contextParts.push(`in ${preferences.city}`);
-    if (preferences.make) contextParts.push(`for ${preferences.make}`);
-    if (preferences.minPrice && preferences.maxPrice) {
-      contextParts.push(
-        `within $${preferences.minPrice} - $${preferences.maxPrice}`
-      );
-    } else if (preferences.maxPrice) {
-      contextParts.push(`under $${preferences.maxPrice}`);
-    } else if (preferences.minPrice) {
-      contextParts.push(`above $${preferences.minPrice}`);
-    }
-    if (preferences.bodyType) contextParts.push(`${preferences.bodyType} type`);
-    if (preferences.year) contextParts.push(`${preferences.year} model`);
-
-    const contextMessage =
-      contextParts.length > 0 ? ` ${contextParts.join(", ")}` : "";
-
-    // Generate introduction message with varied responses
-    const introMessages = [
-      `I have found ${formattedVehicles.length} vehicle${formattedVehicles.length > 1 ? "s" : ""} for you${contextMessage}:`,
-      `Great! I found ${formattedVehicles.length} vehicle${formattedVehicles.length > 1 ? "s" : ""}${contextMessage}:`,
-      `Perfect! Here ${formattedVehicles.length > 1 ? "are" : "is"} ${formattedVehicles.length} vehicle${formattedVehicles.length > 1 ? "s" : ""}${contextMessage}:`,
-    ];
-
-    const randomIntroMessage =
-      introMessages[Math.floor(Math.random() * introMessages.length)];
-
-    // Create structured vehicle list for frontend rendering
-    const vehicleListItems = formattedVehicles.map((v, index) => {
-      const formattedPrice = v.price
-        ? `$${parseInt(v.price).toLocaleString()}`
-        : "Price on request";
-
-      return {
-        number: index + 1,
-        name: v.vehicleName,
-        price: formattedPrice,
-        description: v.shortDescription,
-        url: v.detailsUrl,
-        image: v.image,
-        slug: v.slug,
-        adId: v.adId,
-      };
-    });
-
-    // Build HTML message content for frontend rendering
-    let htmlContent = `<p>${randomIntroMessage}</p><br/>`;
-
-    vehicleListItems.forEach((vehicle) => {
-      htmlContent += `<div style="margin-bottom: 20px;">`;
-      htmlContent += `<p><strong>${vehicle.number}. ${vehicle.name}</strong> - ${vehicle.price}</p>`;
-      htmlContent += `<p style="margin: 5px 0;">${vehicle.description}</p>`;
-      htmlContent += `<a href="/car-details/${vehicle.slug}?adId=${vehicle.adId}" style="color: #2563eb; text-decoration: none; cursor: pointer;">View Details</a>`;
-      htmlContent += `</div>`;
-    });
-
-    return {
-      content: htmlContent,
-      type: "vehicle_results",
-      isHtml: true,
-      data: {
-        vehicles: formattedVehicles,
-        vehicleList: vehicleListItems,
-        count: formattedVehicles.length,
-        preferences,
-      },
-    };
-  } catch (err) {
-    console.error("Vehicle search error:", err);
-    return {
-      content:
-        "I encountered an issue while searching for vehicles. Please try again.",
-      type: "error",
-    };
-  }
-}
-
-// Handle dealer search
-async function handleDealerSearch(message, conversationHistory) {
-  try {
-    // Check only the last 1-2 messages for city context related to dealers
-    let cityFromHistory = null;
-    const recentMessages = conversationHistory.slice(-4); // Last 4 messages (2 user + 2 bot)
-
-    for (let i = recentMessages.length - 1; i >= 0; i--) {
-      const historyMsg = recentMessages[i];
-      if (historyMsg.role === "user") {
-        // Only use city from history if the previous message was also about dealers
-        const isDealerRelated = /dealer|dealership|showroom|seller/i.test(
-          historyMsg.content
-        );
-        if (isDealerRelated) {
-          const cityMatch = historyMsg.content.match(
-            /\b(toronto|calgary|vancouver|montreal|ottawa|edmonton|winnipeg|quebec|hamilton|kitchener|london|victoria|halifax|oshawa|windsor|saskatoon|regina|barrie|kelowna|abbotsford|kingston)\b/i
-          );
-          if (cityMatch) {
-            cityFromHistory = cityMatch[1];
-            break;
-          }
-        }
-      }
-    }
-
-    // Extract location from current message
-    const locationPrompt = `Extract the city or location from this message. Return JSON: {"city": "city name or null"}
-    Message: "${message}"
-    Return ONLY valid JSON.`;
-
-    const locationResponse = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages: [{ role: "user", content: locationPrompt }],
-        max_tokens: 50,
-        temperature: 0.3,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    let content = locationResponse.data.choices[0].message.content.trim();
-
-    // Remove markdown code blocks if present
-    if (content.startsWith("```json")) {
-      content = content.replace(/```json\s*/g, "").replace(/```\s*$/g, "");
-    } else if (content.startsWith("```")) {
-      content = content.replace(/```\s*/g, "");
-    }
-
-    const location = JSON.parse(content);
-
-    // Only use city from current message, don't fall back to history automatically
-    let searchCity = location.city;
-
-    // Check if user mentioned a country instead of a city
-    const isCountryMention = /\b(canada|canadian)\b/i.test(message);
-
-    if (!searchCity && isCountryMention) {
-      // User mentioned Canada but no specific city - show all dealers
-      console.log(
-        "User mentioned Canada without specific city - showing all dealers"
-      );
-
-      const allDealers = await Dealer.findAll({
-        where: {
-          status: "verified",
-        },
-        limit: 10,
-        order: [["createdAt", "DESC"]],
+    if (!["positive", "negative"].includes(feedback)) {
+      return res.status(400).json({
+        error: "Invalid feedback",
+        message: "Feedback must be 'positive' or 'negative'",
       });
+    }
 
-      if (!allDealers || allDealers.length === 0) {
-        return {
-          content: `Sorry, I couldn't find any verified dealers at the moment. Please try again later.`,
-          type: "no_results",
-          data: { dealers: [], location: "Canada" },
-        };
+    // Find the most recent log entry for this session and message
+    // If message_index is provided, we can use it to identify the specific message
+    const whereClause = {
+      session_id: session_id,
+    };
+
+    // Update the most recent matching log
+    const updated = await ChatbotLog.update(
+      { feedback: feedback },
+      {
+        where: whereClause,
+        order: [["created_at", "DESC"]],
+        limit: 1,
       }
+    );
 
-      // Format dealer results
-      const formattedDealers = allDealers.map((d) => ({
-        id: d.id,
-        location: d.location,
-        image: d.image,
-        status: d.status,
-        availableCarListing: d.availableCarListing,
-        openingTime: d.openingTime,
-        closingTime: d.closingTime,
-        analytics: d.analytics,
-        slug: d.slug,
-      }));
-
-      // Create intro message
-      const introMessage = `I found ${allDealers.length} verified dealers across Canada:`;
-
-      // Build HTML content for dealers
-      let htmlContent = `<p>${introMessage}</p><br/>`;
-
-      formattedDealers.forEach((dealer, index) => {
-        htmlContent += `<div style="margin-bottom: 20px;">`;
-        htmlContent += `<p><strong>${index + 1}. ${dealer.location || "Dealer"}</strong></p>`;
-        if (dealer.openingTime && dealer.closingTime) {
-          htmlContent += `<p style="margin: 5px 0;">Hours: ${dealer.openingTime} - ${dealer.closingTime}</p>`;
-        }
-        htmlContent += `<a href="/dealer-details/${dealer.slug}" style="color: #2563eb; text-decoration: none; cursor: pointer;">View Dealer</a>`;
-        htmlContent += `</div>`;
+    if (updated[0] === 0) {
+      return res.status(404).json({
+        error: "Log not found",
+        message: "No chatbot log found for this session",
+        success: false,
       });
-
-      return {
-        content: htmlContent,
-        type: "dealer_results",
-        isHtml: true,
-        data: {
-          dealers: formattedDealers,
-          dealerList: formattedDealers.map((d, index) => ({
-            number: index + 1,
-            location: d.location,
-            availableCarListing: d.availableCarListing,
-            openingTime: d.openingTime,
-            closingTime: d.closingTime,
-            slug: d.slug,
-            url: `/dealer-details/${d.slug}`,
-          })),
-          count: allDealers.length,
-          location: "Canada",
-        },
-      };
     }
 
-    if (!searchCity) {
-      return {
-        content:
-          "I'd love to help you find dealers! Could you please tell me which city you're looking for dealers in? For example: Toronto, Calgary, Vancouver, Montreal, etc.",
-        type: "follow_up",
-        data: { needsCity: true },
-      };
-    }
-
-    console.log("Searching for dealers in:", searchCity);
-
-    // Query dealers from database
-    const dealers = await Dealer.findAll({
-      where: {
-        location: { [Sequelize.Op.iLike]: `%${searchCity}%` },
-        status: "verified",
-      },
-      limit: 10,
-      order: [["createdAt", "DESC"]],
-    });
-
-    console.log("Found dealers:", dealers.length);
-
-    if (!dealers || dealers.length === 0) {
-      // Variable messages for no results
-      const noResultMessages = [
-        `Sorry, I couldn't find any dealers in ${searchCity}. Please try searching in a different city.`,
-        `Unfortunately, I don't have any dealer listings for ${searchCity} at the moment. Would you like to try another location?`,
-        `I wasn't able to find any dealers in ${searchCity}. You might want to check nearby cities.`,
-        `No dealers found in ${searchCity}. Please try a different city or check back later.`,
-      ];
-
-      const randomNoResultMessage =
-        noResultMessages[Math.floor(Math.random() * noResultMessages.length)];
-
-      return {
-        content: randomNoResultMessage,
-        type: "no_results",
-        data: { dealers: [], location: searchCity },
-      };
-    }
-
-    // Format dealer results
-    const formattedDealers = dealers.map((d) => ({
-      id: d.id,
-      location: d.location,
-      image: d.image,
-      status: d.status,
-      availableCarListing: d.availableCarListing,
-      openingTime: d.openingTime,
-      closingTime: d.closingTime,
-      analytics: d.analytics,
-      slug: d.slug,
-    }));
-
-    // Create intro message
-    const introMessages = [
-      `I found ${dealers.length} verified dealer${dealers.length > 1 ? "s" : ""} in ${searchCity}:`,
-      `Great! Here ${dealers.length > 1 ? "are" : "is"} ${dealers.length} dealer${dealers.length > 1 ? "s" : ""} in ${searchCity}:`,
-      `Perfect! I found ${dealers.length} dealer${dealers.length > 1 ? "s" : ""} for you in ${searchCity}:`,
-    ];
-
-    const randomIntroMessage =
-      introMessages[Math.floor(Math.random() * introMessages.length)];
-
-    // Build HTML content for dealers
-    let htmlContent = `<p>${randomIntroMessage}</p><br/>`;
-
-    formattedDealers.forEach((dealer, index) => {
-      htmlContent += `<div style="margin-bottom: 20px;">`;
-      htmlContent += `<p><strong>${index + 1}. ${dealer.location || "Dealer"}</strong></p>`;
-      if (dealer.openingTime && dealer.closingTime) {
-        htmlContent += `<p style="margin: 5px 0;">Hours: ${dealer.openingTime} - ${dealer.closingTime}</p>`;
-      }
-      htmlContent += `<a href="/dealer-details/${dealer.slug}" style="color: #2563eb; text-decoration: none; cursor: pointer;">View Dealer</a>`;
-      htmlContent += `</div>`;
-    });
-
-    return {
-      content: htmlContent,
-      type: "dealer_results",
-      isHtml: true,
-      data: {
-        dealers: formattedDealers,
-        dealerList: formattedDealers.map((d, index) => ({
-          number: index + 1,
-          location: d.location,
-          openingTime: d.openingTime,
-          closingTime: d.closingTime,
-          slug: d.slug,
-          url: `/dealer-details/${d.slug}`,
-        })),
-        count: dealers.length,
-        location: searchCity,
-      },
-    };
-  } catch (err) {
-    console.error("Dealer search error:", err);
-    console.error("Error stack:", err.stack);
-    return {
-      content: `I encountered an issue while searching for dealers: ${err.message}. Please try again or contact support.`,
-      type: "error",
-    };
-  }
-}
-
-// Handle repair search
-async function handleRepairSearch(message, conversationHistory) {
-  try {
-    // Extract location from message
-    const locationPrompt = `Extract the city or location from this message. Also identify repair type if mentioned (general repair, oil change, transmission, etc). 
-    Return JSON: {"city": "city or null", "repairType": "repair type or null"}
-    Message: "${message}"
-    Return ONLY valid JSON.`;
-
-    const locationResponse = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages: [{ role: "user", content: locationPrompt }],
-        max_tokens: 100,
-        temperature: 0.3,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
+    console.log(
+      `[ChatbotLog] Feedback '${feedback}' recorded for session: ${session_id}`
     );
 
-    let content = locationResponse.data.choices[0].message.content.trim();
-
-    // Remove markdown code blocks if present
-    if (content.startsWith("```json")) {
-      content = content.replace(/```json\s*/g, "").replace(/```\s*$/g, "");
-    } else if (content.startsWith("```")) {
-      content = content.replace(/```\s*/g, "");
-    }
-
-    const location = JSON.parse(content);
-
-    // Check if user mentioned a country instead of a city
-    const isCountryMention = /\b(canada|canadian)\b/i.test(message);
-
-    if (!location.city && !isCountryMention) {
-      return {
-        content:
-          "I'd be happy to help you find a repair shop! Which city or area are you in? For example: Toronto, Calgary, Vancouver, Montreal, etc.",
-        type: "follow_up",
-        data: { needsCity: true },
-      };
-    }
-
-    // Query repair shops
-    const where = {
-      status: "verified",
-    };
-
-    // Only add city filter if a specific city was mentioned (not just "Canada")
-    if (location.city && !isCountryMention) {
-      where.location = { [Sequelize.Op.iLike]: `%${location.city}%` };
-    }
-
-    if (location.repairType) {
-      where.servicesOffer = {
-        [Sequelize.Op.iLike]: `%${location.repairType}%`,
-      };
-    }
-
-    const repairs = await Repair.findAll({
-      where,
-      limit: 10,
-      order: [["createdAt", "DESC"]],
+    return res.json({
+      success: true,
+      message: "Feedback recorded successfully",
     });
-
-    if (!repairs || repairs.length === 0) {
-      const locationText = isCountryMention
-        ? "across Canada"
-        : `in ${location.city}`;
-
-      const serviceType = location.repairType
-        ? ` specializing in ${location.repairType}`
-        : "";
-
-      // Variable messages for no results
-      const noResultMessages = [
-        `Sorry, I couldn't find any repair shops ${locationText}${serviceType}. Please try a different location.`,
-        `Unfortunately, I don't have any repair shop listings ${locationText}${serviceType} at the moment. Would you like to try another city?`,
-        `I wasn't able to find any repair shops ${locationText}${serviceType}. You might want to check nearby areas.`,
-        `No repair shops found ${locationText}${serviceType}. Please try a different city or check back later.`,
-      ];
-
-      const randomNoResultMessage =
-        noResultMessages[Math.floor(Math.random() * noResultMessages.length)];
-
-      return {
-        content: randomNoResultMessage,
-        type: "repair_results",
-        data: { repairList: [] },
-      };
-    }
-
-    const formattedRepairs = repairs.map((r) => ({
-      id: r.id,
-      location: r.location,
-      experience: r.experience,
-      specialty: r.specialty,
-      servicesOffer: r.servicesOffer,
-      AboutUs: r.AboutUs,
-      gallery: r.gallery,
-      status: r.status,
-      image: r.image,
-      slug: r.slug,
-      openingTime: r.openingTime,
-      closingTime: r.closingTime,
-      CustomerInsigts: r.CustomerInsigts,
-      LeadToAppointments: r.LeadToAppointments,
-      MostInDemandServices: r.MostInDemandServices,
-    }));
-
-    // Create intro message
-    const locationText = isCountryMention
-      ? "across Canada"
-      : `in ${location.city}`;
-
-    const introMessages = [
-      `I found ${repairs.length} verified repair shop${repairs.length > 1 ? "s" : ""} ${locationText}:`,
-      `Great! Here ${repairs.length > 1 ? "are" : "is"} ${repairs.length} repair shop${repairs.length > 1 ? "s" : ""} ${locationText}:`,
-      `Perfect! I found ${repairs.length} verified repair shop${repairs.length > 1 ? "s" : ""} for you ${locationText}:`,
-    ];
-
-    const randomIntroMessage =
-      introMessages[Math.floor(Math.random() * introMessages.length)];
-
-    // Build HTML content for repair shops
-    let htmlContent = `<p>${randomIntroMessage}</p><br/>`;
-
-    formattedRepairs.forEach((repair, index) => {
-      htmlContent += `<div style="margin-bottom: 20px;">`;
-      htmlContent += `<p><strong>${index + 1}. ${repair.location || "Repair Shop"}</strong></p>`;
-      if (repair.specialty) {
-        htmlContent += `<p style="margin: 5px 0;">Specialty: ${repair.specialty}</p>`;
-      }
-      if (repair.experience) {
-        htmlContent += `<p style="margin: 5px 0;">Experience: ${repair.experience} years</p>`;
-      }
-      if (repair.openingTime && repair.closingTime) {
-        htmlContent += `<p style="margin: 5px 0;">Hours: ${repair.openingTime} - ${repair.closingTime}</p>`;
-      }
-      htmlContent += `<a href="/repair-details/${repair.slug}" style="color: #2563eb; text-decoration: none; cursor: pointer;">View Details</a>`;
-      htmlContent += `</div>`;
+  } catch (error) {
+    console.error("[ChatbotLog] Error recording feedback:", error);
+    return res.status(500).json({
+      error: "Internal server error",
+      message: "Failed to record feedback",
+      success: false,
     });
-
-    return {
-      content: htmlContent,
-      type: "repair_results",
-      isHtml: true,
-      data: {
-        repairs: formattedRepairs,
-        repairList: formattedRepairs.map((r, index) => ({
-          number: index + 1,
-          location: r.location,
-          specialty: r.specialty,
-          experience: r.experience,
-          openingTime: r.openingTime,
-          closingTime: r.closingTime,
-          slug: r.slug,
-          url: `/repair-details/${r.slug}`,
-        })),
-        count: repairs.length,
-        location: location.city,
-      },
-    };
-  } catch (err) {
-    console.error("Repair search error:", err);
-    return {
-      content: "I had trouble finding repair shops. Please try again.",
-      type: "error",
-    };
   }
-}
-
-// Handle insurance search
-async function handleInsuranceSearch(message, conversationHistory) {
-  try {
-    // Extract insurance preferences
-    const extractionPrompt = `Extract insurance preferences from this message. Return JSON:
-    {"insuranceType": "comprehensive|third-party|both or null", "coverage": "amount or null", "vehicleType": "car type or null", "city": "city or null"}
-    Message: "${message}"
-    Return ONLY valid JSON.`;
-
-    const extractionResponse = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages: [{ role: "user", content: extractionPrompt }],
-        max_tokens: 100,
-        temperature: 0.3,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    let content = extractionResponse.data.choices[0].message.content.trim();
-
-    // Remove markdown code blocks if present
-    if (content.startsWith("```json")) {
-      content = content.replace(/```json\s*/g, "").replace(/```\s*$/g, "");
-    } else if (content.startsWith("```")) {
-      content = content.replace(/```\s*/g, "");
-    }
-
-    const preferences = JSON.parse(content);
-
-    // Check if user mentioned a country instead of a city
-    const isCountryMention = /\b(canada|canadian)\b/i.test(message);
-
-    if (!preferences.city && !isCountryMention) {
-      return {
-        content:
-          "I can help you find insurance options! Which city are you located in? For example: Toronto, Calgary, Vancouver, Montreal, etc.",
-        type: "follow_up",
-        data: { preferences, needsCity: true },
-      };
-    }
-
-    // Query insurance providers
-    const where = {
-      status: "verified",
-    };
-
-    // Only add city filter if a specific city was mentioned (not just "Canada")
-    if (preferences.city && !isCountryMention) {
-      where.location = { [Sequelize.Op.iLike]: `%${preferences.city}%` };
-    }
-
-    // No coverageType in Insurance model
-
-    const insuranceProviders = await Insurance.findAll({
-      where,
-      limit: 10,
-      // No rating field in Insurance model
-    });
-
-    if (!insuranceProviders || insuranceProviders.length === 0) {
-      const locationText = isCountryMention
-        ? "across Canada"
-        : `in ${preferences.city}`;
-
-      // Variable messages for no results
-      const noResultMessages = [
-        `Sorry, I couldn't find any insurance providers ${locationText}. Please try a different location.`,
-        `Unfortunately, I don't have any insurance provider listings ${locationText} at the moment. Would you like to try another city?`,
-        `I wasn't able to find any insurance providers ${locationText}. You might want to check nearby areas.`,
-        `No insurance providers found ${locationText}. Please try a different city or check back later.`,
-      ];
-
-      const randomNoResultMessage =
-        noResultMessages[Math.floor(Math.random() * noResultMessages.length)];
-
-      return {
-        content: randomNoResultMessage,
-        type: "insurance_results",
-        data: { insuranceList: [] },
-      };
-    }
-
-    const formattedInsurance = insuranceProviders.map((i) => ({
-      id: i.id,
-      location: i.location,
-      experience: i.experience,
-      keyBenifits: i.keyBenifits,
-      speciality: i.speciality,
-      claimProcess: i.claimProcess,
-      aboutUs: i.aboutUs,
-      status: i.status,
-      image: i.image,
-      slug: i.slug,
-      openingTime: i.openingTime,
-      closingTime: i.closingTime,
-      faqs: i.faqs,
-    }));
-
-    // Create intro message
-    const locationText = isCountryMention
-      ? "across Canada"
-      : `in ${preferences.city}`;
-
-    const introMessages = [
-      `I found ${insuranceProviders.length} verified insurance provider${insuranceProviders.length > 1 ? "s" : ""} ${locationText}:`,
-      `Great! Here ${insuranceProviders.length > 1 ? "are" : "is"} ${insuranceProviders.length} insurance provider${insuranceProviders.length > 1 ? "s" : ""} ${locationText}:`,
-      `Perfect! I found ${insuranceProviders.length} verified insurance provider${insuranceProviders.length > 1 ? "s" : ""} for you ${locationText}:`,
-    ];
-
-    const randomIntroMessage =
-      introMessages[Math.floor(Math.random() * introMessages.length)];
-
-    // Build HTML content for insurance providers
-    let htmlContent = `<p>${randomIntroMessage}</p><br/>`;
-
-    formattedInsurance.forEach((insurance, index) => {
-      htmlContent += `<div style="margin-bottom: 20px;">`;
-      htmlContent += `<p><strong>${index + 1}. ${insurance.location || "Insurance Provider"}</strong></p>`;
-      if (insurance.speciality) {
-        htmlContent += `<p style="margin: 5px 0;">Specialty: ${insurance.speciality}</p>`;
-      }
-      if (insurance.experience) {
-        htmlContent += `<p style="margin: 5px 0;">Experience: ${insurance.experience} years</p>`;
-      }
-      if (insurance.openingTime && insurance.closingTime) {
-        htmlContent += `<p style="margin: 5px 0;">Hours: ${insurance.openingTime} - ${insurance.closingTime}</p>`;
-      }
-      htmlContent += `<a href="/insurance-details/${insurance.slug}" style="color: #2563eb; text-decoration: none; cursor: pointer;">View Details</a>`;
-      htmlContent += `</div>`;
-    });
-
-    return {
-      content: htmlContent,
-      type: "insurance_results",
-      isHtml: true,
-      data: {
-        insurance: formattedInsurance,
-        insuranceList: formattedInsurance.map((i, index) => ({
-          number: index + 1,
-          location: i.location,
-          speciality: i.speciality,
-          experience: i.experience,
-          openingTime: i.openingTime,
-          closingTime: i.closingTime,
-          slug: i.slug,
-          url: `/insurance-details/${i.slug}`,
-        })),
-        count: insuranceProviders.length,
-        location: preferences.city,
-      },
-    };
-  } catch (err) {
-    console.error("Insurance search error:", err);
-    return {
-      content: "I had trouble finding insurance options. Please try again.",
-      type: "error",
-    };
-  }
-}
-
-// Generate AI response for general queries
-async function generateAIResponse(message, conversationHistory, intent) {
-  try {
-    const messages = [
-      {
-        role: "system",
-        content: `You are Carmate's AI assistant. You help users with:
-        - Finding vehicles (cars, motorcycles, etc.)
-        - Locating dealerships and sellers
-        - Finding repair shops and mechanics
-        - Getting insurance recommendations
-        - General platform support
-        
-        Be friendly, helpful, and conversational. If unsure, ask clarifying questions.`,
-      },
-      ...conversationHistory.slice(-4), // Include last 4 messages for context
-      { role: "user", content: message },
-    ];
-
-    const response = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages,
-        max_tokens: 300,
-        temperature: 0.7,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    return {
-      content: response.data.choices[0].message.content,
-      type: "general",
-    };
-  } catch (err) {
-    console.error("AI response error:", err);
-    return {
-      content:
-        "I'm having trouble processing your request. Could you rephrase that?",
-      type: "error",
-    };
-  }
-}
-
-// Helper function to generate AI message
-async function generateAIMessage(prompt) {
-  try {
-    const response = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 150,
-        temperature: 0.7,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    return response.data.choices[0].message.content;
-  } catch (err) {
-    console.error("Generate AI message error:", err);
-    return "Here are the results we found for you.";
-  }
-}
-
-// Helper function to get nearby cities
-async function getNearbyCities(city) {
-  try {
-    // This should query your database for nearby cities
-    // For now, return the same city
-    const nearbyCities = await City.findAll({
-      where: {
-        name: { [Sequelize.Op.iLike]: `%${city}%` },
-      },
-      attributes: ["name"],
-      raw: true,
-    });
-
-    return nearbyCities.map((c) => c.name);
-  } catch (err) {
-    console.error("Get nearby cities error:", err);
-    return [city];
-  }
-}
-
-module.exports = o;
+};

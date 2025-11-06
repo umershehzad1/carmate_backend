@@ -3,7 +3,7 @@
 require("dotenv").config();
 const { port } = require("./config/app");
 require("./config/connection");
-
+const bodyParser = require("body-parser");
 const express = require("express");
 const http = require("http");
 const path = require("path");
@@ -31,6 +31,8 @@ const stripeWebhookRoutes = require("./routes/StripeWebhook");
 
 const walletRoutes = require("./routes/WalletRoutes");
 const chatBotRoutes = require("./routes/ChatBotRoutes");
+const chatbotAnalyticsRoutes = require("./routes/ChatbotAnalyticsRoutes");
+const knowledgeBaseRoutes = require("./routes/KnowledgeBaseRoutes");
 
 const app = express();
 
@@ -55,12 +57,13 @@ app.use("/api/stripe", stripeWebhookRoutes);
 // ✅ 3. BODY PARSERS (JSON, URL-encoded)
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
+app.use(bodyParser.json());
 // ✅ 4. Static files
 app.use(express.static(path.join(__dirname, "public")));
 
 // ✅ 5. CronJobs
 require("./cronjobs/clearOldNotifications");
+require("./cronjobs/manageAdvertisements");
 
 // ✅ 6. ALL OTHER ROUTES
 app.use("/api/v1/user", userRoutes);
@@ -81,6 +84,8 @@ app.use("/api/v1/conversation", conversationRoutes);
 app.use("/api/v1/message", messageRoutes);
 app.use("/api/v1/wallet", walletRoutes);
 app.use("/api/v1/chatbot", chatBotRoutes);
+app.use("/api/v1/chatbot-analytics", chatbotAnalyticsRoutes);
+app.use("/api/v1/knowledgebase", knowledgeBaseRoutes);
 // ✅ HTTP Server & Socket.io Setup
 const server = http.createServer(app);
 

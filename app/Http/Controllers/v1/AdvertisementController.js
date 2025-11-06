@@ -7,7 +7,8 @@ const fs = require("fs");
 const slugify = require("slugify");
 const json = require("../../../Traits/ApiResponser"); // Your custom response helper
 const db = require("../../../Models/index");
-const { Op, fn, col } = require("sequelize");
+const { Op, fn, col, literal } = require("sequelize");
+const sequelize = db.sequelize;
 const Advertisement = db.Advertisement;
 const Vehicle = db.Vehicle;
 const Dealer = db.Dealer;
@@ -30,20 +31,49 @@ o.createAd = async function (req, res, next) {
     const { vehicleId, adType, startDate, endDate, dailyBudget } = req.body;
     const user = req.decoded;
 
-    validateRequiredFieldsSequentially(req.body, [
-      "vehicleId",
-      "adType",
-      "startDate",
-      "endDate",
-    ]);
+    // Validate required fields based on ad type
+    if (adType === "base") {
+      validateRequiredFieldsSequentially(req.body, ["vehicleId", "adType"]);
+    } else {
+      validateRequiredFieldsSequentially(req.body, [
+        "vehicleId",
+        "adType",
+        "startDate",
+        "endDate",
+      ]);
+    }
 
     if (user.role !== "dealer") {
       return json.errorResponse(res, "Unauthorized access", 401);
     }
 
+    // Check dealer's available car listings
+    const dealer = await Dealer.findOne({ where: { userId: user.id } });
+    if (!dealer) {
+      return json.errorResponse(res, "Dealer profile not found", 404);
+    }
+
+    // Check if dealer has available listings
+    if (dealer.availableCarListing <= 0) {
+      return json.errorResponse(
+        res,
+        "You have no available car listings. Please upgrade your package.",
+        400
+      );
+    }
+
     const vehicle = await Vehicle.findByPk(vehicleId);
     if (!vehicle) {
       return json.errorResponse(res, "Vehicle not found", 404);
+    }
+
+    // Check if vehicle status is 'live'
+    if (vehicle.status !== "live") {
+      return json.errorResponse(
+        res,
+        "Cannot create advertisement for a vehicle that is not live",
+        400
+      );
     }
 
     // --- For Sponsored Ads Only: Validate Wallet and Reserve Funds ---
@@ -93,23 +123,43 @@ o.createAd = async function (req, res, next) {
       await wallet.save();
     }
 
-    // --- Create Advertisement (applies to both sponsored & featured) ---
-    const ad = await Advertisement.create({
+    // --- Create Advertisement ---
+    const adData = {
       vehicleId,
       dealerId: user.id,
       adType,
-      startDate,
-      endDate,
-      dailyBudget,
-    });
+      status: "running",
+      pauseReason: "none",
+    };
+
+    // Only add dates and budget for non-base ads
+    if (adType !== "base") {
+      adData.startDate = startDate;
+      adData.endDate = endDate;
+      adData.dailyBudget = dailyBudget || 0.0;
+    } else {
+      adData.startDate = new Date();
+      adData.endDate = null;
+      adData.dailyBudget = 0.0;
+    }
+
+    const ad = await Advertisement.create(adData);
+
+    // --- Deduct one listing from dealer's available car listings ---
+    dealer.availableCarListing = dealer.availableCarListing - 1;
+    await dealer.save();
 
     // --- Dynamic success message ---
-    const message =
-      adType.toLowerCase() === "sponsored"
-        ? `Sponsored ad created successfully. $${requiredAmount.toFixed(
-            2
-          )} has been reserved for ${campaignDays} days.`
-        : "Featured ad created successfully.";
+    let message = "Advertisement created successfully.";
+    if (adType.toLowerCase() === "sponsored") {
+      message = `Sponsored ad created successfully. $${requiredAmount.toFixed(
+        2
+      )} has been reserved for ${campaignDays} days.`;
+    } else if (adType.toLowerCase() === "featured") {
+      message = "Featured ad created successfully.";
+    } else if (adType.toLowerCase() === "base") {
+      message = "Base ad created successfully.";
+    }
 
     return json.successResponse(res, message, 200);
   } catch (error) {
@@ -318,8 +368,22 @@ o.getAllAds = async function (req, res, next) {
     // -----------------------------
     // SORT ORDER
     // -----------------------------
-    const order =
-      sort === "oldest" ? [["createdAt", "ASC"]] : [["createdAt", "DESC"]];
+    // Custom ordering: sponsored first, then featured, then base
+    // Within each type, sort by createdAt
+    const order = [
+      [
+        sequelize.literal(`
+          CASE 
+            WHEN "Advertisement"."adType" = 'sponsored' THEN 1
+            WHEN "Advertisement"."adType" = 'featured' THEN 2
+            WHEN "Advertisement"."adType" = 'base' THEN 3
+            ELSE 4
+          END
+        `),
+        "ASC",
+      ],
+      ["createdAt", sort === "oldest" ? "ASC" : "DESC"],
+    ];
 
     // -----------------------------
     // MAIN QUERY
@@ -550,16 +614,29 @@ o.getAllFeaturesAds = async function (req, res, next) {
     // -----------------------------
     // SORT ORDER
     // -----------------------------
-    const order =
-      sort === "oldest" ? [["createdAt", "ASC"]] : [["createdAt", "DESC"]];
+    // Custom ordering: sponsored first, then featured
+    // Within each type, sort by createdAt
+    const order = [
+      [
+        sequelize.literal(`
+          CASE 
+            WHEN "Advertisement"."adType" = 'sponsored' THEN 1
+            WHEN "Advertisement"."adType" = 'featured' THEN 2
+            ELSE 3
+          END
+        `),
+        "ASC",
+      ],
+      ["createdAt", sort === "oldest" ? "ASC" : "DESC"],
+    ];
 
     // -----------------------------
     // MAIN QUERY
     // -----------------------------
     const query = {
       where: {
-        adType: "featured",
-        status: "running", // ✅ Only include running featured ads
+        adType: { [Op.in]: ["sponsored", "featured"] }, // ✅ Only include sponsored and featured ads
+        status: "running", // ✅ Only include running ads
       },
       include: [
         {
@@ -609,7 +686,7 @@ o.getAllFeaturesAds = async function (req, res, next) {
     const totalVehicles = await Vehicle.count();
 
     // -----------------------------
-    // AGGREGATION COUNTS (for filters) - ONLY FOR RUNNING FEATURED ADS
+    // AGGREGATION COUNTS (for filters) - ONLY FOR RUNNING SPONSORED & FEATURED ADS
     // -----------------------------
     const aggregateAttributes = [
       "city",
@@ -634,7 +711,10 @@ o.getAllFeaturesAds = async function (req, res, next) {
             model: Advertisement,
             as: "advertisement",
             attributes: [],
-            where: { adType: "featured", status: "running" }, // ✅ Only count running featured ads
+            where: {
+              adType: { [Op.in]: ["sponsored", "featured"] }, // ✅ Only count running sponsored & featured ads
+              status: "running",
+            },
             required: true,
           },
         ],
@@ -652,8 +732,8 @@ o.getAllFeaturesAds = async function (req, res, next) {
       success: true,
       message:
         ads.length > 0
-          ? "Running featured ads fetched successfully"
-          : "No running featured ads found matching your criteria",
+          ? "Running sponsored and featured ads fetched successfully"
+          : "No running sponsored or featured ads found matching your criteria",
       pagination: {
         totalFiltered: filteredCount,
         totalAllVehicles: totalVehicles,
@@ -662,8 +742,8 @@ o.getAllFeaturesAds = async function (req, res, next) {
         totalPages: Math.ceil(filteredCount / limit),
         rangeText:
           filteredCount > 0
-            ? `${offset + 1}-${Math.min(offset + parseInt(limit), filteredCount)} of ${filteredCount} running featured ads`
-            : "0 running featured ads",
+            ? `${offset + 1}-${Math.min(offset + parseInt(limit), filteredCount)} of ${filteredCount} running ads`
+            : "0 running ads",
       },
       filterStats: aggregateData,
       data: ads || [],
@@ -895,6 +975,13 @@ o.deleteAd = async function (req, res, next) {
 
     // --- Delete the ad ---
     await ad.destroy();
+
+    // --- Increment dealer's available car listings ---
+    const dealer = await Dealer.findOne({ where: { userId: ad.dealerId } });
+    if (dealer) {
+      dealer.availableCarListing = dealer.availableCarListing + 1;
+      await dealer.save();
+    }
 
     return json.successResponse(res, "Ad deleted successfully.", 200);
   } catch (error) {

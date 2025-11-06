@@ -42,8 +42,8 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: "none",
       },
       adType: {
-        type: DataTypes.ENUM("featured", "sponsored"),
-        defaultValue: "featured",
+        type: DataTypes.ENUM("featured", "sponsored", "base"),
+        defaultValue: "base",
         allowNull: false,
       },
       views: {
