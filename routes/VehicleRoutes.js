@@ -91,7 +91,7 @@ router.post(
 router.route("/getAllVehicles").get(vehicleCtrl.getAllVehicles);
 router.route("/:slug").get(vehicleCtrl.getVehicleDetails);
 router
-  .route("/getdealervehicles/:status?")
+  .route("/getdealervehicles/:status")
   .get(authCtrl.authenticate, vehicleCtrl.getDealerVehicles);
 
 router
