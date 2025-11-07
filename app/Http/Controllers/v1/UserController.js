@@ -61,19 +61,30 @@ o.signup = async (req, res, next) => {
       return json.errorResponse(res, "User Already Exist!", 409);
     }
 
-    const usernameExist = await User.findOne({
-      where: { username: req.body.username },
-    });
+    // Generate unique username from email and random string
+    let baseUsername = req.body.email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+    let username = baseUsername;
+    let usernameExists = true;
+    let counter = 0;
 
-    if (usernameExist) {
-      return json.errorResponse(res, "Username Already Exist!", 409);
+    // Keep checking until we find a unique username
+    while (usernameExists) {
+      const existingUser = await User.findOne({ where: { username } });
+      if (!existingUser) {
+        usernameExists = false;
+      } else {
+        counter++;
+        // Append random string or counter to make it unique
+        const randomSuffix = Math.floor(Math.random() * 10000);
+        username = `${baseUsername}${randomSuffix}`;
+      }
     }
 
     let password = bcrypt.hashSync(req.body.password, 5);
 
     let newUser = new User({
       email: req.body.email,
-      username: req.body.username,
+      username: username,
       fullname: req.body.fullname,
       password: password,
     });
@@ -87,9 +98,11 @@ o.signup = async (req, res, next) => {
 
     newUserInfo.token = createToken(newUser);
 
-    json.showOne(res, newUserInfo, 201);
+    json.successResponse(res, "Sign Up Successfully", 201);
   } catch (err) {
-    return json.errorResponse(res, err);
+    console.error("Signup Error:", err);
+    const errorMessage = err.message || err.toString() || "Signup failed";
+    return json.errorResponse(res, errorMessage, 500);
   }
 };
 
@@ -140,7 +153,9 @@ o.login = async (req, res, next) => {
 
     json.showOne(res, { user: newUserInfo, token }, 200);
   } catch (err) {
-    return json.errorResponse(res, err);
+    console.error("Login Error:", err);
+    const errorMessage = err.message || err.toString() || "Login failed";
+    return json.errorResponse(res, errorMessage, 500);
   }
 };
 
@@ -153,25 +168,29 @@ o.me = async (req, res, next) => {
         {
           model: Dealer,
           as: "dealer",
-          attributes: { exclude: ["userId"] }, // optional: exclude foreign key
+          required: false, // LEFT JOIN - returns user even if no dealer record
+          attributes: { exclude: ["userId"] },
         },
         {
           model: Repair,
           as: "repair",
+          required: false,
         },
         {
           model: Insurance,
           as: "insurance",
+          required: false,
         },
         {
           model: Wallet,
           as: "wallet",
+          required: false,
         },
-        // {
-        //   model: Subscription,
-        //   as: "subscription",
-        // },
-        // Add other associations as needed
+        {
+          model: Subscription,
+          as: "subscription",
+          required: false,
+        },
       ],
     });
 
@@ -179,9 +198,15 @@ o.me = async (req, res, next) => {
       return json.notFound(res, "User not found");
     }
 
+    // Log for debugging
+    console.log("User data:", JSON.stringify(user, null, 2));
+
     return json.showOne(res, user);
   } catch (err) {
-    return json.errorResponse(res, err);
+    console.error("Get User Error:", err);
+    console.error("Error details:", err.message);
+    const errorMessage = err.message || err.toString() || "Failed to fetch user";
+    return json.errorResponse(res, errorMessage, 500);
   }
 };
 
@@ -222,8 +247,9 @@ o.edit = async (req, res, next) => {
 
     json.showOne(res, user);
   } catch (err) {
-    console.error(err);
-    return json.errorResponse(res, err);
+    console.error("Edit User Error:", err);
+    const errorMessage = err.message || err.toString() || "Failed to update user";
+    return json.errorResponse(res, errorMessage, 500);
   }
 };
 
@@ -258,8 +284,9 @@ o.forgetPassword = async (req, res, next) => {
 
     json.showOne(res, "Otp Sent to your email.", 200);
   } catch (err) {
-    console.error(err);
-    return json.errorResponse(res, err);
+    console.error("Forget Password Error:", err);
+    const errorMessage = err.message || err.toString() || "Failed to send OTP";
+    return json.errorResponse(res, errorMessage, 500);
   }
 };
 
@@ -317,7 +344,9 @@ o.verifyResetPasswordCode = async function (req, res, next) {
       200
     );
   } catch (err) {
-    return json.errorResponse(res, err);
+    console.error("Verify Reset Password Code Error:", err);
+    const errorMessage = err.message || err.toString() || "Verification failed";
+    return json.errorResponse(res, errorMessage, 500);
   }
 };
 
@@ -350,7 +379,9 @@ o.resetPassword = async function (req, res, next) {
       success ? 200 : 404
     );
   } catch (err) {
-    return json.errorResponse(res, err);
+    console.error("Reset Password Error:", err);
+    const errorMessage = err.message || err.toString() || "Password reset failed";
+    return json.errorResponse(res, errorMessage, 500);
   }
 };
 
@@ -359,7 +390,9 @@ o.getAllUsers = async function (req, res, next) {
     const users = await User.findAll();
     json.showAll(res, users, 200);
   } catch (error) {
-    return json.errorResponse(res, err);
+    console.error("Get All Users Error:", error);
+    const errorMessage = error.message || error.toString() || "Failed to fetch users";
+    return json.errorResponse(res, errorMessage, 500);
   }
 };
 

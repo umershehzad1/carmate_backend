@@ -908,4 +908,72 @@ If issues persist, email support@carmate.com or call our helpline.`,
   }
 };
 
+/**
+ * Get FAQs for chatbot
+ * Fetches FAQ content from Pinecone with FAQ category
+ */
+o.getFAQs = async function (req, res, next) {
+  try {
+    const pinecone = new Pinecone({ apiKey: PINECONE_API_KEY });
+    const index = pinecone.Index(PINECONE_INDEX || "carmate");
+
+    const embeddings = new OpenAIEmbeddings({
+      model: "text-embedding-3-large",
+      apiKey: OPENAI_API_KEY,
+    });
+
+    const vectorStore = await PineconeStore.fromExistingIndex(embeddings, {
+      pineconeIndex: index,
+    });
+
+    // Pull many vectors; filter manually
+    const allResults = await vectorStore.similaritySearchWithScore("faq", 200);
+
+    const faqResults = allResults.filter(([doc]) => {
+      return doc.metadata?.category === "faq";
+    });
+
+    const faqMap = new Map();
+
+    faqResults.forEach(([doc, score]) => {
+      const content = doc.pageContent;
+      if (!content) return;
+
+      const lines = content.split("\n").filter((line) => line.trim());
+
+      lines.forEach((line) => {
+        if (
+          line.match(/^##\s+/) ||
+          line.match(/^\d+\.\s+/) ||
+          line.includes("?")
+        ) {
+          const question = line
+            .replace(/^##\s+/, "")
+            .replace(/^\d+\.\s+/, "")
+            .trim();
+
+          if (question && question.length > 10 && question.length < 200) {
+            faqMap.set(question, {
+              question,
+              category: "faq",
+              score,
+            });
+          }
+        }
+      });
+    });
+
+    const faqs = Array.from(faqMap.values()).slice(0, 50);
+
+    return json.successResponse(res, faqs, 200);
+  } catch (error) {
+    console.error("[KnowledgeBase] Get FAQs error:", error);
+
+    const defaultFAQs = [
+      /* ... */
+    ];
+    return json.successResponse(res, defaultFAQs, 200);
+  }
+};
+
 module.exports = o;
