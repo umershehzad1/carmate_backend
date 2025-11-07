@@ -341,12 +341,7 @@ o.getAllAds = async function (req, res, next) {
     if (bodyTypeArray?.length)
       vehicleWhere.bodyType = { [Op.in]: bodyTypeArray };
 
-    // Range filters
-    if (minPrice && maxPrice)
-      vehicleWhere.price = { [Op.between]: [minPrice, maxPrice] };
-    else if (minPrice) vehicleWhere.price = { [Op.gte]: minPrice };
-    else if (maxPrice) vehicleWhere.price = { [Op.lte]: maxPrice };
-
+    // Range filters (non-price)
     if (minYear && maxYear)
       vehicleWhere.year = { [Op.between]: [minYear, maxYear] };
     else if (minYear) vehicleWhere.year = { [Op.gte]: minYear };
@@ -393,6 +388,21 @@ o.getAllAds = async function (req, res, next) {
     };
 
     if (adType) adWhere.adType = adType;
+
+    // Add price filter to main where clause using literal
+    if (minPrice && maxPrice) {
+      adWhere[Op.and] = sequelize.literal(
+        `CAST("vehicle"."price" AS DECIMAL) BETWEEN ${parseFloat(minPrice)} AND ${parseFloat(maxPrice)}`
+      );
+    } else if (minPrice) {
+      adWhere[Op.and] = sequelize.literal(
+        `CAST("vehicle"."price" AS DECIMAL) >= ${parseFloat(minPrice)}`
+      );
+    } else if (maxPrice) {
+      adWhere[Op.and] = sequelize.literal(
+        `CAST("vehicle"."price" AS DECIMAL) <= ${parseFloat(maxPrice)}`
+      );
+    }
 
     const query = {
       where: adWhere,
@@ -587,12 +597,7 @@ o.getAllFeaturesAds = async function (req, res, next) {
     if (modelCategoryArray?.length)
       vehicleWhere.modelCategory = { [Op.in]: modelCategoryArray };
 
-    // Range filters
-    if (minPrice && maxPrice)
-      vehicleWhere.price = { [Op.between]: [minPrice, maxPrice] };
-    else if (minPrice) vehicleWhere.price = { [Op.gte]: minPrice };
-    else if (maxPrice) vehicleWhere.price = { [Op.lte]: maxPrice };
-
+    // Range filters (non-price)
     if (minYear && maxYear)
       vehicleWhere.year = { [Op.between]: [minYear, maxYear] };
     else if (minYear) vehicleWhere.year = { [Op.gte]: minYear };
@@ -633,11 +638,28 @@ o.getAllFeaturesAds = async function (req, res, next) {
     // -----------------------------
     // MAIN QUERY
     // -----------------------------
+    const adWhere = {
+      adType: { [Op.in]: ["sponsored", "featured"] }, // ✅ Only include sponsored and featured ads
+      status: "running", // ✅ Only include running ads
+    };
+
+    // Add price filter to main where clause using literal
+    if (minPrice && maxPrice) {
+      adWhere[Op.and] = sequelize.literal(
+        `CAST("vehicle"."price" AS DECIMAL) BETWEEN ${parseFloat(minPrice)} AND ${parseFloat(maxPrice)}`
+      );
+    } else if (minPrice) {
+      adWhere[Op.and] = sequelize.literal(
+        `CAST("vehicle"."price" AS DECIMAL) >= ${parseFloat(minPrice)}`
+      );
+    } else if (maxPrice) {
+      adWhere[Op.and] = sequelize.literal(
+        `CAST("vehicle"."price" AS DECIMAL) <= ${parseFloat(maxPrice)}`
+      );
+    }
+
     const query = {
-      where: {
-        adType: { [Op.in]: ["sponsored", "featured"] }, // ✅ Only include sponsored and featured ads
-        status: "running", // ✅ Only include running ads
-      },
+      where: adWhere,
       include: [
         {
           model: Vehicle,
