@@ -8,7 +8,7 @@ const { PineconeStore } = require("@langchain/pinecone");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs").promises;
-const { PDFParse } = require("pdf-parse");
+const PDFParse = require("pdf-parse");
 const json = require("../../../Traits/ApiResponser");
 
 const { OPENAI_API_KEY, PINECONE_API_KEY, PINECONE_INDEX } = process.env;
@@ -120,10 +120,8 @@ o.uploadDocument = async function (req, res, next) {
 
       if (ext === ".pdf") {
         // Parse PDF
-        const parser = new PDFParse({ data: file.buffer });
-        await parser.load();
-        const result = await parser.getText();
-        content = result.text || "";
+        const data = await PDFParse(file.buffer);
+        content = data.text || "";
       } else if (ext === ".txt") {
         // Read TXT file
         content = file.buffer.toString("utf-8");
@@ -169,7 +167,10 @@ o.uploadDocument = async function (req, res, next) {
       const vectors = await embeddings.embedDocuments(texts);
 
       // Prepare records with unique IDs based on filename
-      const fileId = `file_${Date.now()}_${fileName.replace(/[^a-zA-Z0-9]/g, "_")}`;
+      const fileId = `file_${Date.now()}_${fileName.replace(
+        /[^a-zA-Z0-9]/g,
+        "_"
+      )}`;
       const records = chunks.map((chunk, idx) => ({
         id: `${fileId}_chunk_${idx}`,
         values: vectors[idx],
