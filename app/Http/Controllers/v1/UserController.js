@@ -628,25 +628,129 @@ o.getAdminStats = async function (req, res, next) {
     const totalAds = Number(dealerAdsResult[0]?.totalAds || 0);
     const totalAdRevenue = Number(dealerAdsResult[0]?.totalAdRevenue || 0);
 
-    // 4️⃣ Activity chart (monthly revenue)
+    // 4️⃣ Activity chart (monthly subscription count for last 12 months)
+    const { range = "year" } = req.query;
+    const now = new Date();
+    let startDate;
+
+    if (range === "week") {
+      startDate = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - 7
+      );
+    } else if (range === "month") {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    } else {
+      // year - last 12 months
+      startDate = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+    }
+
     const activityData = await Subscription.findAll({
       attributes: [
-        [Sequelize.fn("TO_CHAR", Sequelize.col("createdAt"), "MON"), "month"],
         [
-          Sequelize.literal(`
-            SUM(
-              CAST(
-                REPLACE(REPLACE(CAST("price" AS TEXT), '$', ''), ',', '') AS NUMERIC
-              )
-            )
-          `),
-          "value",
+          Sequelize.fn("TO_CHAR", Sequelize.col("createdAt"), "YYYY-MM"),
+          "yearMonth",
         ],
+        [Sequelize.fn("TO_CHAR", Sequelize.col("createdAt"), "Mon"), "month"],
+        [Sequelize.fn("COUNT", Sequelize.col("id")), "value"],
       ],
-      group: [Sequelize.fn("TO_CHAR", Sequelize.col("createdAt"), "MON")],
-      order: [[Sequelize.fn("MIN", Sequelize.col("createdAt")), "ASC"]],
+      where: {
+        createdAt: {
+          [Sequelize.Op.gte]: startDate,
+        },
+      },
+      group: [
+        Sequelize.fn("TO_CHAR", Sequelize.col("createdAt"), "YYYY-MM"),
+        Sequelize.fn("TO_CHAR", Sequelize.col("createdAt"), "Mon"),
+      ],
+      order: [
+        [Sequelize.fn("TO_CHAR", Sequelize.col("createdAt"), "YYYY-MM"), "ASC"],
+      ],
       raw: true,
     });
+
+    // Format activity data to ensure all months are present
+    const formattedActivityData = [];
+    if (range === "year") {
+      // Generate all 12 months
+      for (let i = 0; i < 12; i++) {
+        const date = new Date(now.getFullYear(), now.getMonth() - (11 - i), 1);
+        const yearMonth = date.toISOString().slice(0, 7);
+        const monthName = date.toLocaleDateString("en-US", { month: "short" });
+
+        const existingData = activityData.find(
+          (d) => d.yearMonth === yearMonth
+        );
+        formattedActivityData.push({
+          month: monthName,
+          value: existingData ? parseInt(existingData.value) : 0,
+        });
+      }
+    } else if (range === "month") {
+      // Generate days of current month
+      const daysInMonth = new Date(
+        now.getFullYear(),
+        now.getMonth() + 1,
+        0
+      ).getDate();
+      const dailyData = await Subscription.findAll({
+        attributes: [
+          [Sequelize.fn("DATE", Sequelize.col("createdAt")), "date"],
+          [Sequelize.fn("COUNT", Sequelize.col("id")), "value"],
+        ],
+        where: {
+          createdAt: {
+            [Sequelize.Op.gte]: startDate,
+          },
+        },
+        group: [Sequelize.fn("DATE", Sequelize.col("createdAt"))],
+        order: [[Sequelize.fn("DATE", Sequelize.col("createdAt")), "ASC"]],
+        raw: true,
+      });
+
+      for (let i = 1; i <= daysInMonth; i++) {
+        const date = new Date(now.getFullYear(), now.getMonth(), i);
+        const dateStr = date.toISOString().split("T")[0];
+        const existingData = dailyData.find((d) => d.date === dateStr);
+        formattedActivityData.push({
+          month: i.toString(),
+          value: existingData ? parseInt(existingData.value) : 0,
+        });
+      }
+    } else if (range === "week") {
+      // Generate last 7 days
+      const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const dailyData = await Subscription.findAll({
+        attributes: [
+          [Sequelize.fn("DATE", Sequelize.col("createdAt")), "date"],
+          [Sequelize.fn("COUNT", Sequelize.col("id")), "value"],
+        ],
+        where: {
+          createdAt: {
+            [Sequelize.Op.gte]: startDate,
+          },
+        },
+        group: [Sequelize.fn("DATE", Sequelize.col("createdAt"))],
+        order: [[Sequelize.fn("DATE", Sequelize.col("createdAt")), "ASC"]],
+        raw: true,
+      });
+
+      for (let i = 6; i >= 0; i--) {
+        const date = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          now.getDate() - i
+        );
+        const dateStr = date.toISOString().split("T")[0];
+        const dayName = dayNames[date.getDay()];
+        const existingData = dailyData.find((d) => d.date === dateStr);
+        formattedActivityData.push({
+          month: dayName,
+          value: existingData ? parseInt(existingData.value) : 0,
+        });
+      }
+    }
 
     // 5️⃣ Dashboard summary cards
     const stats = [
@@ -664,7 +768,7 @@ o.getAdminStats = async function (req, res, next) {
       },
     ];
 
-    json.showAll(res, { stats, activityData }, 200);
+    json.showAll(res, { stats, activityData: formattedActivityData }, 200);
   } catch (error) {
     console.error("Dashboard API Error:", error);
     return json.errorResponse(res, error.message || error, 400);
