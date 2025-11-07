@@ -155,8 +155,8 @@ o.createCheckoutSession = async function (req, res, next) {
           quantity: 1,
         },
       ],
-      success_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/cancel`,
+      success_url: `${process.env.CLIENT_SUCCESS_URL || "https://carmate-nextjs.vercel.app"}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.CLIENT_CANCEL_URL || "https://carmate-nextjs.vercel.app"}`,
       // ✅ Store metadata on checkout session (NOW INCLUDES PACKAGE ID)
       metadata: {
         userId: String(userId),
