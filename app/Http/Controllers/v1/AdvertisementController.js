@@ -348,9 +348,9 @@ o.getAllAds = async function (req, res, next) {
     else if (maxPrice) vehicleWhere.price = { [Op.lte]: maxPrice };
 
     if (minYear && maxYear)
-      vehicleWhere.model = { [Op.between]: [minYear, maxYear] };
-    else if (minYear) vehicleWhere.model = { [Op.gte]: minYear };
-    else if (maxYear) vehicleWhere.model = { [Op.lte]: maxYear };
+      vehicleWhere.year = { [Op.between]: [minYear, maxYear] };
+    else if (minYear) vehicleWhere.year = { [Op.gte]: minYear };
+    else if (maxYear) vehicleWhere.year = { [Op.lte]: maxYear };
 
     if (minMileage && maxMileage)
       vehicleWhere.mileage = { [Op.between]: [minMileage, maxMileage] };
@@ -594,9 +594,9 @@ o.getAllFeaturesAds = async function (req, res, next) {
     else if (maxPrice) vehicleWhere.price = { [Op.lte]: maxPrice };
 
     if (minYear && maxYear)
-      vehicleWhere.model = { [Op.between]: [minYear, maxYear] };
-    else if (minYear) vehicleWhere.model = { [Op.gte]: minYear };
-    else if (maxYear) vehicleWhere.model = { [Op.lte]: maxYear };
+      vehicleWhere.year = { [Op.between]: [minYear, maxYear] };
+    else if (minYear) vehicleWhere.year = { [Op.gte]: minYear };
+    else if (maxYear) vehicleWhere.year = { [Op.lte]: maxYear };
 
     if (minMileage && maxMileage)
       vehicleWhere.mileage = { [Op.between]: [minMileage, maxMileage] };
