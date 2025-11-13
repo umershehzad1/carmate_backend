@@ -31,4 +31,6 @@ router
     ContactController.getContactDetails
   );
 
+  router.route("/delete/:id").delete(authCtrl.authenticate, authCtrl.isAdmin, ContactController.deleteContact)
+
 module.exports = router;

@@ -72,4 +72,18 @@ o.getAllContacts = async function (req, res, next) {
   }
 };
 
+o.deleteContact = async function (req,res,next) {
+  try {
+    const { id } = req.params;
+    const contact = await Contact.findByPk(id);
+    if (!contact) {
+      return json.errorResponse(res, "Contact Not Found", 404);
+    }
+    await contact.destroy();
+    return json.successResponse(res, "Contact deleted successfully", 200);
+  } catch (error) {
+    return json.errorResponse(res, error.message || error, 400);  
+  }
+}
+
 module.exports = o;
