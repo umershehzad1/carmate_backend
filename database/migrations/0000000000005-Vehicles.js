@@ -108,7 +108,7 @@ module.exports = {
         allowNull: false,
       },
       status: {
-        type: DataTypes.ENUM("live", "draft", "sold"),
+        type: Sequelize.ENUM("live", "draft", "sold"),
         allowNull: false,
         defaultValue: "live",
       },

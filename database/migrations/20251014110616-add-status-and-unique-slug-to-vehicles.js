@@ -2,12 +2,17 @@
 
 module.exports = {
   async up(queryInterface, Sequelize) {
-    // Add "status" column
-    await queryInterface.addColumn("Vehicles", "status", {
-      type: Sequelize.ENUM("live", "draft", "sold"),
-      allowNull: false,
-      defaultValue: "live",
-    });
+    // Check if status column exists
+    const tableDefinition = await queryInterface.describeTable("Vehicles");
+    
+    if (!tableDefinition.status) {
+      // Add "status" column only if it doesn't exist
+      await queryInterface.addColumn("Vehicles", "status", {
+        type: Sequelize.ENUM("live", "draft", "sold"),
+        allowNull: false,
+        defaultValue: "live",
+      });
+    }
 
     // Add unique constraint on slug
     await queryInterface.addConstraint("Vehicles", {
