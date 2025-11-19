@@ -21,7 +21,7 @@ module.exports = {
       // 3. Alter the column to use the new enum type
       await queryInterface.sequelize.query(
         `
-        ALTER TABLE "notifications"
+        ALTER TABLE "Notifications"
         ALTER COLUMN "type"
         TYPE enum_notifications_type
         USING "type"::text::enum_notifications_type;
@@ -59,7 +59,7 @@ module.exports = {
 
       await queryInterface.sequelize.query(
         `
-        ALTER TABLE "notifications"
+        ALTER TABLE "Notifications"
         ALTER COLUMN "type"
         TYPE enum_notifications_type
         USING "type"::text::enum_notifications_type;

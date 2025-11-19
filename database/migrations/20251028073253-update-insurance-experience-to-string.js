@@ -12,9 +12,8 @@ module.exports = {
 
   async down(queryInterface, Sequelize) {
     // Revert back to ARRAY(STRING) if needed
-    await queryInterface.changeColumn("Insurances", "experience", {
-      type: Sequelize.ARRAY(Sequelize.STRING),
-      allowNull: true,
-    });
+    await queryInterface.sequelize.query(
+      `ALTER TABLE "Insurances" ALTER COLUMN "experience" TYPE VARCHAR[] USING ARRAY["experience"]::VARCHAR[];`
+    );
   },
 };

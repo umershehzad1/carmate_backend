@@ -16,22 +16,16 @@ module.exports = {
 
         allowNull: false,
 
-        unique: true,
-
         references: {
           model: "Users",
           key: "id",
         },
-      },
-
-      type: {
-        type: Sequelize.ENUM("dealer", "repair", "insurance"),
-
-        allowNull: false,
+        
+        onDelete: "CASCADE",
       },
 
       plan: {
-        type: Sequelize.ENUM("basic", "pro", "premium"),
+        type: Sequelize.STRING,
 
         allowNull: false,
       },
@@ -42,28 +36,20 @@ module.exports = {
         allowNull: false,
       },
 
-      description: {
-        type: Sequelize.TEXT,
-
-        allowNull: true,
-      },
-
-      features: {
-        type: Sequelize.JSON,
+      stripeSubscriptionId: {
+        type: Sequelize.STRING,
 
         allowNull: false,
+      },
 
-        defaultValue: [],
+      stripeCustomerId: {
+        type: Sequelize.STRING,
+
+        allowNull: false,
       },
 
       expiryDate: {
         type: Sequelize.DATE,
-
-        allowNull: true,
-      },
-
-      carListing: {
-        type: Sequelize.INTEGER,
 
         allowNull: true,
       },
