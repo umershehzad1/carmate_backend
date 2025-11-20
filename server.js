@@ -1,5 +1,18 @@
 "use strict";
 
+// ✅ Polyfill File and Blob globals for undici compatibility in older Node versions
+if (typeof globalThis.File === "undefined") {
+  const { Blob } = require("buffer");
+  
+  globalThis.File = class File extends Blob {
+    constructor(fileBits, fileName, options = {}) {
+      super(fileBits, options);
+      this.name = fileName;
+      this.lastModified = options.lastModified || Date.now();
+    }
+  };
+}
+
 require("dotenv").config();
 const { port } = require("./config/app");
 require("./config/connection");
