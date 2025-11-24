@@ -275,6 +275,7 @@ o.getAllAds = async function (req, res, next) {
       make,
       minPrice,
       maxPrice,
+      condition,
       minYear,
       maxYear,
       minMileage,
@@ -311,6 +312,10 @@ o.getAllAds = async function (req, res, next) {
     const cityArray = parseArrayFilter(city);
     if (cityArray?.length) vehicleWhere.city = { [Op.in]: cityArray };
 
+    const conditionArray = parseArrayFilter(condition);
+if (conditionArray?.length)
+  vehicleWhere.condition = { [Op.in]: conditionArray };
+
     const provinceArray = parseArrayFilter(province);
     if (provinceArray?.length)
       vehicleWhere.province = { [Op.in]: provinceArray };
@@ -332,6 +337,7 @@ o.getAllAds = async function (req, res, next) {
     const fuelTypeArray = parseArrayFilter(fuelType);
     if (fuelTypeArray?.length)
       vehicleWhere.fuelType = { [Op.in]: fuelTypeArray };
+    
 
     const assemblyInArray = parseArrayFilter(assemblyIn);
     if (assemblyInArray?.length)
@@ -340,6 +346,7 @@ o.getAllAds = async function (req, res, next) {
     const bodyTypeArray = parseArrayFilter(bodyType);
     if (bodyTypeArray?.length)
       vehicleWhere.bodyType = { [Op.in]: bodyTypeArray };
+    
 
     // Range filters (non-price)
     if (minYear && maxYear)
@@ -465,6 +472,7 @@ o.getAllAds = async function (req, res, next) {
       "transmission",
       "color",
       "modelCategory",
+       "condition",
     ];
 
     const aggregateData = {};
