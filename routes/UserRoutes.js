@@ -99,6 +99,9 @@ router.route("/googlesignup").post(userCtrl.googleSignup);
 router
   .route("/getadminusers/:role")
   .get(authCtrl.authenticate, authCtrl.isAdmin, userCtrl.getAdminUsers);
+router
+  .route("/admin/updateuser/:id")
+  .patch(authCtrl.authenticate, authCtrl.isAdmin, userCtrl.adminUpdateUser);
 // Upload Routes
 router
   .route("/upload")

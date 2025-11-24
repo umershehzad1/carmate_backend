@@ -132,6 +132,24 @@ o.login = async (req, res, next) => {
   try {
     const user = await User.findOne({
       where: { email: req.body.email },
+      include: [
+        {
+          model: Dealer,
+          as: "dealer",
+          required: false,
+          attributes: { exclude: ["userId"] },
+        },
+        {
+          model: Repair,
+          as: "repair",
+          required: false,
+        },
+        {
+          model: Insurance,
+          as: "insurance",
+          required: false,
+        },
+      ],
     });
 
     if (!user) {
@@ -145,7 +163,7 @@ o.login = async (req, res, next) => {
       return json.errorResponse(res, "Wrong password", 401);
     }
 
-    let newUserInfo = user;
+    let newUserInfo = user.toJSON();
     // Remove sensitive information
     delete newUserInfo.password;
 
@@ -471,29 +489,97 @@ o.updateRole = async function (req, res, next) {
   }
 };
 
+// Admin: update another user's email and/or password
+o.adminUpdateUser = async function (req, res, next) {
+  try {
+    const { id } = req.params;
+    const { email, password } = req.body;
+
+    const user = await User.findByPk(id);
+    if (!user) return json.errorResponse(res, "User not found", 404);
+
+    // If email provided, ensure it's not used by another user
+    if (email) {
+      const existing = await User.findOne({ where: { email } });
+      if (existing && existing.id !== user.id) {
+        return json.errorResponse(res, "Email already in use", 409);
+      }
+    }
+
+    const updates = {};
+    if (email) updates.email = email;
+    if (password) updates.password = bcrypt.hashSync(password, 5);
+
+    await user.update(updates);
+
+    // Do not return password in response
+    const userSafe = user.toJSON ? user.toJSON() : Object.assign({}, user);
+    if (userSafe.password) delete userSafe.password;
+
+    return json.showOne(res, userSafe, 200);
+  } catch (error) {
+    console.error("Admin Update User Error:", error);
+    return json.errorResponse(res, error.message || error, 400);
+  }
+};
+
 o.getAdminUsers = async function (req, res, next) {
   try {
     const { role } = req.params;
+    // Pagination params
+    const page = parseInt(req.query.page, 10) || 1;
+    const perPage = parseInt(req.query.perPage || req.query.limit, 10) || 10;
+    const offset = (page - 1) * perPage;
 
-    // Fetch all users of the given role
-    const users = await User.findAll({
+    // Fetch paginated users and total count for the role
+    const { count, rows } = await User.findAndCountAll({
       where: { role },
       include: [
         { model: Dealer, as: "dealer" },
         { model: Repair, as: "repair" },
         { model: Insurance, as: "insurance" },
       ],
+      limit: perPage,
+      offset: offset,
+      order: [["createdAt", "DESC"]],
     });
+
+    const users = rows;
+
+    // Build pagination meta
+    const total = count || 0;
+    const totalPages = perPage > 0 ? Math.ceil(total / perPage) : 0;
 
     // Initialize stats object
     const stats = {};
 
+    // For stats we need ALL user ids of this role (not only current page)
+    const allUsersForRole = await User.findAll({
+      where: { role },
+      attributes: ["id"],
+      raw: true,
+    });
+
+    const allIds = allUsersForRole.map((u) => u.id);
+
+    // If no users, return early with empty stats
+    if (allIds.length === 0) {
+      json.showAll(
+        res,
+        {
+          users,
+          pagination: { total, page, perPage, totalPages },
+          ...stats,
+        },
+        200
+      );
+      return;
+    }
+
     // ---------- Dealer Stats ----------
     if (role === "dealer") {
-      // Get all dealer IDs
-      const dealerIds = users.map((u) => u.id);
+      const dealerIds = allIds;
 
-      // Fetch total ads and total ad revenue
       const ads = await Advertisement.findAll({
         where: { dealerId: dealerIds },
         attributes: [
@@ -503,12 +589,9 @@ o.getAdminUsers = async function (req, res, next) {
         raw: true,
       });
 
-      // Fetch dealer subscriptions count
       const subscriptions = await Subscription.findAll({
         where: { userId: dealerIds },
-        attributes: [
-          [Sequelize.fn("COUNT", Sequelize.col("id")), "subscriptionCount"],
-        ],
+        attributes: [[Sequelize.fn("COUNT", Sequelize.col("id")), "subscriptionCount"]],
         raw: true,
       });
 
@@ -521,15 +604,14 @@ o.getAdminUsers = async function (req, res, next) {
 
     // ---------- Repair Stats ----------
     else if (role === "repair") {
-      const repairIds = users.map((u) => u.id);
+      const repairIds = allIds;
 
-      // Fetch total subscription revenue for repair users
       const subs = await Subscription.findAll({
         where: { userId: repairIds },
         attributes: [
           [
             Sequelize.literal(
-              `SUM(CAST(REPLACE(REPLACE("price", '$', ''), ',', '') AS NUMERIC))`
+              `SUM(CAST(REPLACE(REPLACE(CAST("price" AS TEXT), '$', ''), ',', '') AS NUMERIC))`
             ),
             "totalSubscriptionRevenue",
           ],
@@ -539,24 +621,21 @@ o.getAdminUsers = async function (req, res, next) {
       });
 
       stats.repairStats = {
-        totalSubscriptionRevenue: Number(
-          subs[0]?.totalSubscriptionRevenue || 0
-        ),
+        totalSubscriptionRevenue: Number(subs[0]?.totalSubscriptionRevenue || 0),
         subscriptionCount: Number(subs[0]?.subscriptionCount || 0),
       };
     }
 
     // ---------- Insurance Stats ----------
     else if (role === "insurance") {
-      const insuranceIds = users.map((u) => u.id);
+      const insuranceIds = allIds;
 
-      // Fetch total subscription revenue for insurance users
       const subs = await Subscription.findAll({
         where: { userId: insuranceIds },
         attributes: [
           [
             Sequelize.literal(
-              `SUM(CAST(REPLACE(REPLACE("price", '$', ''), ',', '') AS NUMERIC))`
+              `SUM(CAST(REPLACE(REPLACE(CAST("price" AS TEXT), '$', ''), ',', '') AS NUMERIC))`
             ),
             "totalSubscriptionRevenue",
           ],
@@ -566,15 +645,21 @@ o.getAdminUsers = async function (req, res, next) {
       });
 
       stats.insuranceStats = {
-        totalSubscriptionRevenue: Number(
-          subs[0]?.totalSubscriptionRevenue || 0
-        ),
+        totalSubscriptionRevenue: Number(subs[0]?.totalSubscriptionRevenue || 0),
         subscriptionCount: Number(subs[0]?.subscriptionCount || 0),
       };
     }
 
-    // Send response with stats if available
-    json.showAll(res, { users, ...stats }, 200);
+    // Send response with paginated users and stats
+    json.showAll(
+      res,
+      {
+        users,
+        pagination: { total, page, perPage, totalPages },
+        ...stats,
+      },
+      200
+    );
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
   }

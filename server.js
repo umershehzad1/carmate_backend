@@ -78,6 +78,7 @@ app.use(express.static(path.join(__dirname, "public")));
 require("./cronjobs/clearOldNotifications");
 require("./cronjobs/manageAdvertisements");
 require("./cronjobs/vehicleScraper");
+require("./cronjobs/cleanupUnverifiedDealers");
 
 // ✅ 6. ALL OTHER ROUTES
 app.use("/api/v1/user", userRoutes);
