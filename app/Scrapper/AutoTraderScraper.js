@@ -12,8 +12,8 @@ class AutoTraderScraper extends BaseScraper {
     super("AutoTrader");
     this.baseUrl = "https://www.autotrader.ca";
     this.searchUrl = `${this.baseUrl}/cars/`;
-    this.maxPages = 1; // Number of pages to scrape per run
-    this.maxVehicles = 1; // Maximum vehicles to collect
+    this.maxPages = 10; // Number of pages to scrape per run
+    this.maxVehicles = 33; // Maximum vehicles to collect
   }
 
   /**

@@ -17,7 +17,7 @@ class SteeleFordScraper extends BaseScraper {
     this.baseUrl = "https://steeleauto.com";
     this.searchUrl = `${this.baseUrl}/inventory/search`;
     this.maxPages = 5;
-    this.maxVehicles = 200;
+    this.maxVehicles = 33;
   }
 
   async scrape() {

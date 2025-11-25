@@ -43,11 +43,11 @@ async function runVehicleScraper() {
 // Run every 5 minutes
 // Cron format: "*/5 * * * *"
 // Minutes Hours Day Month DayOfWeek
-cron.schedule("*/1 * * * *", async () => {
+cron.schedule("0 23 * * *", async () => {
   const orchestrator = new ScraperOrchestrator();
-  // Ensure we run 5 vehicles per scraper for each cron execution
-  orchestrator.globalMaxVehicles = (orchestrator.scrapers.length || 1) * 5;
-  console.log(`🧭 Running vehicle scraper: target ${orchestrator.globalMaxVehicles} vehicles (${orchestrator.scrapers.length} scrapers, 5 each)`);
+  // Ensure we run 33 vehicles per scraper for each nightly cron execution
+  orchestrator.globalMaxVehicles = (orchestrator.scrapers.length || 1) * 33;
+  console.log(`🧭 Running vehicle scraper: target ${orchestrator.globalMaxVehicles} vehicles (${orchestrator.scrapers.length} scrapers, 33 each)`);
   await orchestrator.run();
 });
 
@@ -58,11 +58,11 @@ cron.schedule("*/1 * * * *", async () => {
 // });
 
 console.log("✅ Vehicle scraper cronjob initialized.");
-console.log("   - Scheduled to run every 5 minutes");
+console.log("   - Scheduled to run nightly at 11:00 PM (server timezone)");
 console.log("   - Scrapes vehicles from AutoTrader, Steele (SteeleFord), and Oregan");
 console.log("   - Kijiji scraper is intentionally excluded");
 console.log("   - Creates dealer accounts (role: dealer) and dealer profiles");
-console.log("   - Creates vehicles with base advertisements automatically (global cap: 100 per run)");
+console.log("   - Creates vehicles with base advertisements automatically (33 per scraper by default)");
 
 // Export for manual execution if needed
 module.exports = {

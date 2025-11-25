@@ -25,8 +25,8 @@ class ScraperOrchestrator {
       new OreganScrapper(),
     ];
 
-    // Global cap across all scrapers — default to 5 vehicles per scraper
-    this.globalMaxVehicles = (this.scrapers.length || 1) * 5;
+    // Global cap across all scrapers — default to 33 vehicles per scraper
+    this.globalMaxVehicles = (this.scrapers.length || 1) * 33;
 
     this.stats = {
       totalScraped: 0,

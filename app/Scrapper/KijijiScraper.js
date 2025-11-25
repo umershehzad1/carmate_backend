@@ -13,7 +13,7 @@ class KijijiScraper extends BaseScraper {
     this.baseUrl = "https://www.kijiji.ca";
     this.searchUrl = `${this.baseUrl}/b-cars-vehicles/canada/c27l0`;
     this.maxPages = 10; // Number of pages to scrape per run
-    this.maxVehicles = 100; // Maximum vehicles to collect
+    this.maxVehicles = 33; // Maximum vehicles to collect
   }
 
   /**

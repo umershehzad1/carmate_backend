@@ -14,7 +14,7 @@ class OregansScraper extends BaseScraper {
     this.baseUrl = "https://www.oregans.com";
     this.searchUrl = `${this.baseUrl}/inventory/`;
     this.maxPages = 1;
-    this.maxVehicles = 1;
+    this.maxVehicles = 33;
   }
 
   /**
