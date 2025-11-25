@@ -20,6 +20,7 @@ OPENAI_API_KEY=sk-your-openai-api-key-here
 PINECONE_API_KEY=your-pinecone-api-key-here
 PINECONE_INDEX=carmate
 ```
+# How to setup
 
 ## 🎯 Usage
 
