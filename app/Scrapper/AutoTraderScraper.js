@@ -12,8 +12,8 @@ class AutoTraderScraper extends BaseScraper {
     super("AutoTrader");
     this.baseUrl = "https://www.autotrader.ca";
     this.searchUrl = `${this.baseUrl}/cars/`;
-    this.maxPages = 10; // Number of pages to scrape per run
-    this.maxVehicles = 100; // Maximum vehicles to collect
+    this.maxPages = 1; // Number of pages to scrape per run
+    this.maxVehicles = 1; // Maximum vehicles to collect
   }
 
   /**
@@ -84,6 +84,12 @@ class AutoTraderScraper extends BaseScraper {
     this.log(`Found ${listings.length} listings on page ${page}`);
 
     for (let i = 0; i < listings.length; i++) {
+      // Respect scraper's maxVehicles while iterating listings to avoid
+      // fetching unnecessary detail pages which are slow.
+      if (vehicles.length >= this.maxVehicles) {
+        this.log(`Reached maxVehicles (${this.maxVehicles}) during listings loop. Stopping iteration.`);
+        break;
+      }
       try {
         const listingElement = $(listings[i]);
         const vehicleData = await this.extractVehicleData($, listingElement);

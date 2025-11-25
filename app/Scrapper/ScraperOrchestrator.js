@@ -12,21 +12,21 @@ const axios = require("axios");
 const cloudinary = require("../Traits/Cloudinary");
 
 const AutoTraderScraper = require("./AutoTraderScraper");
-const KijijiScraper = require("./KijijiScraper");
-const CarPagesScraper = require("./CarPagesScraper");
+const SteeleFordScraper = require("./SteeleFordScraper");
+const OreganScrapper = require("./OreganScrapper");
 
-/**
- * Main Scraper Orchestrator
- * Coordinates all scrapers and handles data import
- */
+
 class ScraperOrchestrator {
   constructor() {
-    // Only use AutoTrader for now - others have issues with blocking/selectors
+    // Configure which scrapers to run here. Kijiji is intentionally omitted.
     this.scrapers = [
       new AutoTraderScraper(),
-      // new KijijiScraper(), // Blocked by Kijiji (403 error)
-      // new CarPagesScraper(), // Wrong selectors
+      new SteeleFordScraper(),
+      new OreganScrapper(),
     ];
+
+    // Global cap across all scrapers — default to 5 vehicles per scraper
+    this.globalMaxVehicles = (this.scrapers.length || 1) * 5;
 
     this.stats = {
       totalScraped: 0,
@@ -126,9 +126,28 @@ class ScraperOrchestrator {
   async scrapeAllSources() {
     const allVehicles = [];
 
-    for (const scraper of this.scrapers) {
+    // Allocate per-scraper quotas so combined results do not exceed globalMaxVehicles
+    const numScrapers = this.scrapers.length || 1;
+    const basePer = Math.floor(this.globalMaxVehicles / numScrapers);
+    const remainder = this.globalMaxVehicles % numScrapers;
+
+    this.log(`Allocating up to ${this.globalMaxVehicles} vehicles across ${numScrapers} scrapers (${basePer} each, +1 for first ${remainder} scrapers if needed)`);
+
+    for (let i = 0; i < this.scrapers.length; i++) {
+      const scraper = this.scrapers[i];
       try {
-        this.log(`Running ${scraper.name} scraper...`);
+        // Assign quota for this run — distribute the remainder across the first N scrapers
+        const allocated = basePer + (i < remainder ? 1 : 0);
+        // Respect a scraper's own configured (smaller) `maxVehicles` when present.
+        // If the scraper has explicitly set a lower `maxVehicles`, keep it instead of overwriting.
+        if (typeof scraper.maxVehicles !== "undefined" && scraper.maxVehicles > 0 && scraper.maxVehicles < allocated) {
+          this.log(`Respecting ${scraper.name} scraper's configured maxVehicles: ${scraper.maxVehicles}`);
+        } else {
+          // Assign the allocated quota for this run
+          scraper.maxVehicles = allocated;
+        }
+
+        this.log(`Running ${scraper.name} scraper (quota: ${scraper.maxVehicles})...`);
         const vehicles = await scraper.scrape();
 
         this.log(
@@ -147,6 +166,12 @@ class ScraperOrchestrator {
         );
         this.stats.totalErrors++;
       }
+    }
+
+    // Ensure global cap
+    if (allVehicles.length > this.globalMaxVehicles) {
+      this.log(`Trimming combined results from ${allVehicles.length} to global cap ${this.globalMaxVehicles}`);
+      return allVehicles.slice(0, this.globalMaxVehicles);
     }
 
     return allVehicles;
@@ -390,13 +415,17 @@ class ScraperOrchestrator {
    */
   async createVehicleWithAd(dealerId, vehicleData) {
     try {
+      // Normalize fields to match DB column types (many columns are strings)
+      const normYear = vehicleData.year != null ? String(vehicleData.year) : null;
+      const normMileage = vehicleData.mileage != null ? String(vehicleData.mileage) : null;
+
       // Check if vehicle already exists
       const existingVehicle = await Vehicle.findOne({
         where: {
           dealerId: dealerId,
           make: vehicleData.make,
           model: vehicleData.model,
-          year: vehicleData.year,
+          year: normYear,
           price: vehicleData.price,
         },
       });
@@ -430,6 +459,13 @@ class ScraperOrchestrator {
       this.log(`Successfully uploaded ${cloudinaryImages.length} images for: ${name}`, "success");
 
       // Prepare vehicle data - map all fields from Vehicle model
+      // Normalize condition to match ENUM values in DB
+      let normCondition = (vehicleData.condition || "used").toString().toLowerCase();
+      if (normCondition.startsWith("u")) normCondition = "used";
+      else if (normCondition.startsWith("n")) normCondition = "new";
+      else if (normCondition.includes("cert")) normCondition = "certified";
+      else normCondition = "used";
+
       const vehiclePayload = {
         dealerId: dealerId,
         name: name,
@@ -441,8 +477,8 @@ class ScraperOrchestrator {
         make: vehicleData.make,
         model: vehicleData.model,
         modelCategory: vehicleData.modelCategory,
-        year: vehicleData.year,
-        mileage: vehicleData.mileage,
+        year: normYear,
+        mileage: normMileage,
         transmission: vehicleData.transmission || "Manual",
         fuelType: vehicleData.fuelType || "Petrol",
         registerIn: vehicleData.registerIn,
@@ -451,7 +487,7 @@ class ScraperOrchestrator {
         color: vehicleData.color || vehicleData.exteriorColor,
         exteriorColor: vehicleData.exteriorColor || vehicleData.color,
         engineCapacity: vehicleData.engineCapacity,
-        condition: vehicleData.condition || "used",
+        condition: normCondition,
         description: vehicleData.description || `${name} available for sale`,
         status: "live", // Set to live so it triggers automatic ad creation
         location: vehicleData.location,

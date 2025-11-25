@@ -18,9 +18,15 @@ async function testScraper() {
 
   try {
     const orchestrator = new ScraperOrchestrator();
-    
-    console.log("⚙️  Starting scraper orchestrator...\n");
-    
+
+    // For testing: limit every configured scraper to 5 vehicles (and small page runs when supported)
+    orchestrator.scrapers.forEach((s) => {
+      if (typeof s.maxVehicles !== "undefined") s.maxVehicles = 5;
+      if (typeof s.maxPages !== "undefined") s.maxPages = 1;
+    });
+
+    console.log("⚙️  Starting scraper orchestrator (TEST MODE: all scrapers limited to 5 vehicles each)...\n");
+
     await orchestrator.run();
     
     console.log("\n✅ Scraper test completed successfully!");

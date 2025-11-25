@@ -5,7 +5,7 @@ const ScraperOrchestrator = require("../app/Scrapper/ScraperOrchestrator");
 
 /**
  * Vehicle Scraper Cron Job
- * Runs every night at 11 PM (23:00) to scrape vehicle data from various sources
+ * Runs periodically to scrape vehicle data from configured sources
  */
 
 let isRunning = false;
@@ -40,11 +40,15 @@ async function runVehicleScraper() {
 // SCHEDULE CRON JOB
 // ─────────────────────────────
 
-// Run every night at 11 PM (23:00)
-// Cron format: "0 23 * * *"
+// Run every 5 minutes
+// Cron format: "*/5 * * * *"
 // Minutes Hours Day Month DayOfWeek
-cron.schedule("0 23 * * *", async () => {
-  await runVehicleScraper();
+cron.schedule("*/1 * * * *", async () => {
+  const orchestrator = new ScraperOrchestrator();
+  // Ensure we run 5 vehicles per scraper for each cron execution
+  orchestrator.globalMaxVehicles = (orchestrator.scrapers.length || 1) * 5;
+  console.log(`🧭 Running vehicle scraper: target ${orchestrator.globalMaxVehicles} vehicles (${orchestrator.scrapers.length} scrapers, 5 each)`);
+  await orchestrator.run();
 });
 
 // For testing: Run every 5 minutes (uncomment when needed)
@@ -54,10 +58,11 @@ cron.schedule("0 23 * * *", async () => {
 // });
 
 console.log("✅ Vehicle scraper cronjob initialized.");
-console.log("   - Scheduled to run every night at 11:00 PM (23:00)");
-console.log("   - Scrapes vehicles from AutoTrader.ca, Kijiji.ca, and CarPages.ca");
+console.log("   - Scheduled to run every 5 minutes");
+console.log("   - Scrapes vehicles from AutoTrader, Steele (SteeleFord), and Oregan");
+console.log("   - Kijiji scraper is intentionally excluded");
 console.log("   - Creates dealer accounts (role: dealer) and dealer profiles");
-console.log("   - Creates vehicles with base advertisements automatically");
+console.log("   - Creates vehicles with base advertisements automatically (global cap: 100 per run)");
 
 // Export for manual execution if needed
 module.exports = {
