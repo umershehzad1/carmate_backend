@@ -28,9 +28,9 @@ const upload = multer({
 
 const router = express.Router();
 router
-  .route("/getrepairstats")
+  .route("/getdetailerStats")
   .get(authCtrl.authenticate, detailerController.getDetailerStats);
-router.route("/getallrepairs").get(detailerController.getAllDetailers);
+router.route("/getalldetailers").get(detailerController.getAllDetailers);
 router.route("/:slug").get(detailerController.getDetailerDetails);
 router
   .route("/")

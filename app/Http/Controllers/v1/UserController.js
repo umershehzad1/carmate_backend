@@ -9,6 +9,7 @@ const Insurance = db.Insurance;
 const Advertisement = db.Advertisement;
 const Subscription = db.Subscription;
 const Wallet = db.Wallet;
+const Detailer = db.Detailer;
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
@@ -197,6 +198,11 @@ o.me = async (req, res, next) => {
         {
           model: Insurance,
           as: "insurance",
+          required: false,
+        },
+         {
+          model: Detailer,
+          as: "detailer",
           required: false,
         },
         {

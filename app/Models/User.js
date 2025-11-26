@@ -14,6 +14,12 @@ module.exports = (sequelize, DataTypes) => {
         as: "repair",
         onDelete: "CASCADE",
       });
+       User.hasOne(models.Detailer, {
+        // or hasMany if multiple repairs allowed
+        foreignKey: "userId",
+        as: "detailer",
+        onDelete: "CASCADE",
+      });
       User.hasOne(models.Dealer, {
         foreignKey: "userId",
         as: "dealer",
