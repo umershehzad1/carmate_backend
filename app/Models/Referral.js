@@ -39,7 +39,7 @@ module.exports = (sequelize, DataTypes) => {
         references: { model: "Users", key: "id" },
       },
       jobType: {
-        type: DataTypes.ENUM("repair", "insurance"),
+        type: DataTypes.ENUM("repair", "insurance", "detailer"),
         allowNull: false,
       },
       jobCategory: {

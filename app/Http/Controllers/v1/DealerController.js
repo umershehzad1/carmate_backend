@@ -9,15 +9,6 @@ const { Op, where } = require("sequelize");
 const Dealer = db.Dealer;
 const Vehicle = db.Vehicle;
 const User = db.User;
-// Sequential field validation function
-function validateRequiredFieldsSequentially(body, requiredFields) {
-  for (const field of requiredFields) {
-    const value = body[field];
-    if (!value || (typeof value === "string" && value.trim() === "")) {
-      throw new Error(`Field "${field}" is required`);
-    }
-  }
-}
 
 const o = {};
 

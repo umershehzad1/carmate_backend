@@ -76,7 +76,7 @@ module.exports = (sequelize, DataTypes) => {
       phone: DataTypes.STRING,
       image: DataTypes.STRING,
       role: {
-        type: DataTypes.ENUM("user", "admin", "repair", "insurance", "dealer"),
+        type: DataTypes.ENUM("user", "admin", "repair","detailer", "insurance", "dealer"),
         defaultValue: "user",
       },
       resetPasswordCode: DataTypes.STRING,

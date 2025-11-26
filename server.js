@@ -31,6 +31,7 @@ const contactRoutes = require("./routes/ContactRoutes");
 const reportsRoutes = require("./routes/ReportsRoutes");
 const dealerRoutes = require("./routes/DealerRoutes");
 const referralRoutes = require("./routes/ReferralRoutes");
+const detailerRoutes = require("./routes/DetailerRoutes");
 const repairRoutes = require("./routes/RepairRoutes");
 const insuranceRoutes = require("./routes/InsuranceRoutes");
 const advertisementRoutes = require("./routes/AdvertisementRoutes");
@@ -101,7 +102,8 @@ app.use("/api/v1/wallet", walletRoutes);
 app.use("/api/v1/chatbot", chatBotRoutes);
 app.use("/api/v1/chatbot-analytics", chatbotAnalyticsRoutes);
 app.use("/api/v1/knowledgebase", knowledgeBaseRoutes);
-// ✅ HTTP Server & Socket.io Setup
+app.use("/api/v1/detailer", detailerRoutes);
+
 const server = http.createServer(app);
 
 global.io = new Server(server, {

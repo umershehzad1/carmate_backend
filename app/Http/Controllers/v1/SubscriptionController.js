@@ -12,6 +12,7 @@ const Vehicle = db.Vehicle;
 const User = db.User;
 const Package = db.Package;
 const Dealer = db.Dealer;
+const Detailer = db.Detailer;
 const Repair = db.Repair;
 const Insurance = db.Insurance;
 const Wallet = db.Wallet;
@@ -505,9 +506,37 @@ o.handleCheckoutSessionCompleted = async (session) => {
             slug: newRepair.slug,
             status: newRepair.status,
           });
-        } else {
+        }  else {
           console.log(
             `ℹ️ [WEBHOOK] Repair record already exists for userId: ${userId}`
+          );
+        }
+      } else if (newRole === "detailer") {
+        console.log(
+          `🔍 [WEBHOOK] Checking for existing Detailer record for userId: ${userId}`
+        );
+        const existingDetailer = await Detailer.findOne({ where: { userId } });
+        if (!existingDetailer) {
+          console.log(`📝 [WEBHOOK] Creating new Detailer record...`);
+          const slug = user.fullname
+            .toLowerCase()
+            .replace(/ /g, "-")
+            .replace(/[^\w-]+/g, "");
+          const newDetailer = await Detailer.create({
+            userId,
+            location: user.city || null,
+            status: "nonverified",
+            slug: slug,
+          });
+          console.log(`✅ [WEBHOOK] Detailer record created:`, {
+            id: newDetailer.id,
+            userId: newDetailer.userId,
+            slug: newDetailer.slug,
+            status: newDetailer.status,
+          });
+        }  else {
+          console.log(
+            `ℹ️ [WEBHOOK] Detailer record already exists for userId: ${userId}`
           );
         }
       } else if (newRole === "insurance") {
@@ -625,6 +654,16 @@ o.handleCheckoutSessionCompleted = async (session) => {
       // 🔹🔹🔹 END WALLET INITIALIZATION 🔹🔹🔹
     } else if (user.role === "repair") {
       console.log(`📝 [WEBHOOK] Updating Repair record...`);
+      const updateResult = await Repair.update(
+        { status: "verified" },
+        { where: { userId } }
+      );
+      console.log(
+        `✅ [WEBHOOK] Repair user ${userId} updated - affected rows: ${updateResult[0]}`
+      );
+      console.log(`✅ [WEBHOOK] Repair user ${userId} verified`);
+    } else if (user.role === "detailer") {
+      console.log(`📝 [WEBHOOK] Updating Detailer record...`);
       const updateResult = await Repair.update(
         { status: "verified" },
         { where: { userId } }
