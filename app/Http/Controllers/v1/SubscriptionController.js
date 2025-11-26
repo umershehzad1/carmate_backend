@@ -664,14 +664,14 @@ o.handleCheckoutSessionCompleted = async (session) => {
       console.log(`✅ [WEBHOOK] Repair user ${userId} verified`);
     } else if (user.role === "detailer") {
       console.log(`📝 [WEBHOOK] Updating Detailer record...`);
-      const updateResult = await Repair.update(
+      const updateResult = await Detailer.update(
         { status: "verified" },
         { where: { userId } }
       );
       console.log(
-        `✅ [WEBHOOK] Repair user ${userId} updated - affected rows: ${updateResult[0]}`
+        `✅ [WEBHOOK] Detailer user ${userId} updated - affected rows: ${updateResult[0]}`
       );
-      console.log(`✅ [WEBHOOK] Repair user ${userId} verified`);
+      console.log(`✅ [WEBHOOK] Detailer user ${userId} verified`);
     } else if (user.role === "insurance") {
       console.log(`📝 [WEBHOOK] Updating Insurance record...`);
       const updateResult = await Insurance.update(
