@@ -138,7 +138,7 @@ class OregansScraper extends BaseScraper {
 
       // === Price ===
       const priceValue = $listing.find(".ouvsrCurrentPrice .currencyValue").text().trim();
-      const price = priceValue ? `$${priceValue}` : null;
+      const price = priceValue ? `${priceValue}` : null;
 
       // === Description ===
       const description = $listing.find(".ouvsrDescription").text().trim().replace(/More$/, "").trim();
