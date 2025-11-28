@@ -15,7 +15,9 @@ const o = {};
 o.getAllDealers = async function (req, res, next) {
   try {
     const { page = 1, limit = 10, search } = req.query;
-    const offset = (page - 1) * limit;
+    const pageInt = parseInt(page) || 1;
+    const limitInt = parseInt(limit) || 10;
+    const offset = (pageInt - 1) * limitInt;
     const where = {};
 
     // Search dealers by city (case-insensitive, partial match)
@@ -23,7 +25,7 @@ o.getAllDealers = async function (req, res, next) {
       where.location = { [Op.iLike]: `%${search}%` };
     }
 
-    // Fetch dealers with pagination
+    // Fetch dealers with pagination; order verified dealers first, then by createdAt
     const { rows: dealers, count: total } = await Dealer.findAndCountAll({
       where,
       include: [
@@ -33,12 +35,18 @@ o.getAllDealers = async function (req, res, next) {
           attributes: ["id", "fullname", "email", "phone", "image"],
         },
       ],
-      limit: parseInt(limit),
+      limit: limitInt,
       offset,
-      order: [["createdAt", "DESC"]],
+      order: [
+        [
+          db.sequelize.literal("CASE WHEN status = 'verified' THEN 0 ELSE 1 END"),
+          "ASC",
+        ],
+        ["createdAt", "DESC"],
+      ],
     });
 
-    const totalPages = Math.ceil(total / limit);
+    const totalPages = Math.ceil(total / limitInt);
 
     if (!dealers || dealers.length === 0) {
       return json.errorResponse(res, "No dealers found", 404);
@@ -54,6 +62,8 @@ o.getAllDealers = async function (req, res, next) {
     return json.errorResponse(res, error.message || error, 400);
   }
 };
+
+
 
 o.getDealerDetails = async function (req, res, next) {
   try {

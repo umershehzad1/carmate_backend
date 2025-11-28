@@ -258,7 +258,7 @@ class AutoTraderScraper extends BaseScraper {
 
         // Dealer info
         dealerName: dealerName,
-        dealerLocation: location,
+        dealerLocation: "",
 
         // Source
         sourceUrl: detailUrl ? `${this.baseUrl}${detailUrl}` : null,

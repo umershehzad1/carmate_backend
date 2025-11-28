@@ -31,7 +31,7 @@ o.getAllDetailers = async function (req, res, next) {
     }
 
     // Fetch Detailer with pagination
-    const { rows: repairs, count: total } = await Detailer.findAndCountAll({
+    const { rows: detailers, count: total } = await Detailer.findAndCountAll({
       where,
       include: [
         {
@@ -47,15 +47,15 @@ o.getAllDetailers = async function (req, res, next) {
 
     const totalPages = Math.ceil(total / limit);
 
-    if (!repairs || repairs.length === 0) {
-      return json.errorResponse(res, "No insurances found", 404);
+    if (!detailers || detailers.length === 0) {
+      return json.errorResponse(res, "No detailers found", 404);
     }
 
     return json.successResponse(res, {
       currentPage: parseInt(page),
       totalPages,
       totalRecords: total,
-      repairs,
+      detailers,
     });
   } catch (error) {
     return json.errorResponse(res, error.message || error, 400);
@@ -180,7 +180,7 @@ o.getDetailerStats = async function (req, res, next) {
     const user = req.decoded;
 
     // Validate user role
-    if (user.role !== "repair") {
+    if (user.role !== "detailer") {
       return json.errorResponse(
         res,
         "You are not authorized to perform this action",

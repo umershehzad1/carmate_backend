@@ -472,7 +472,7 @@ class SteeleFordScraper extends BaseScraper {
       images: images,
       description: title || null,
       dealerName: dealerName,
-      dealerLocation: "Halifax, Nova Scotia",
+      dealerLocation: "",
       city: "Halifax",
       province: "Nova Scotia",
       location: "Halifax, Nova Scotia",
