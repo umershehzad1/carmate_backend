@@ -526,6 +526,7 @@ o.getAllFeaturesAds = async function (req, res, next) {
       sort = "recent",
       keyword,
       city,
+      condition,
       province,
       make,
       minPrice,
@@ -571,7 +572,9 @@ o.getAllFeaturesAds = async function (req, res, next) {
     const provinceArray = parseArrayFilter(province);
     if (provinceArray?.length)
       vehicleWhere.province = { [Op.in]: provinceArray };
-
+        const conditionArray = parseArrayFilter(condition);
+if (conditionArray?.length)
+  vehicleWhere.condition = { [Op.in]: conditionArray };
     const makeArray = parseArrayFilter(make);
     if (makeArray?.length) vehicleWhere.make = { [Op.in]: makeArray };
 
@@ -727,6 +730,7 @@ o.getAllFeaturesAds = async function (req, res, next) {
       "transmission",
       "color",
       "modelCategory",
+      "condition",
     ];
 
     const aggregateData = {};
@@ -911,16 +915,18 @@ o.updateAdStatus = async function (req, res, next) {
           );
         }
 
-        // 2️⃣ Check if daily budget was already reached today
-        const costPerClick = 0.1;
-        const potentialSpentToday = (ad.clicksToday || 0) * costPerClick;
+        // 2️⃣ Check daily budget ONLY for sponsored ads
+        if (ad.adType === "sponsored") {
+          const costPerClick = 0.1;
+          const potentialSpentToday = (ad.clicksToday || 0) * costPerClick;
 
-        if (potentialSpentToday >= parseFloat(ad.dailyBudget)) {
-          return json.errorResponse(
-            res,
-            "Cannot resume this ad because its daily budget has already been reached for today.",
-            400
-          );
+          if (potentialSpentToday >= parseFloat(ad.dailyBudget)) {
+            return json.errorResponse(
+              res,
+              "Cannot resume this ad because its daily budget has already been reached for today.",
+              400
+            );
+          }
         }
 
         // ✅ If checks pass — resume the ad
