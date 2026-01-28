@@ -16,9 +16,70 @@ const Detailer = db.Detailer;
 const Repair = db.Repair;
 const Insurance = db.Insurance;
 const Wallet = db.Wallet;
+const PaymentLog = db.PaymentLog;
 const createAndEmitNotification = require("../../../Traits/CreateAndEmitNotification");
 
 const o = {};
+
+/**
+ * Helper function to log payment attempts
+ */
+const logPaymentAttempt = async (data) => {
+  try {
+    await PaymentLog.create({
+      userId: data.userId,
+      subscriptionId: data.subscriptionId || null,
+      stripePaymentIntentId: data.stripePaymentIntentId || null,
+      stripeInvoiceId: data.stripeInvoiceId || null,
+      stripeCustomerId: data.stripeCustomerId,
+      amount: data.amount,
+      currency: data.currency || "usd",
+      status: data.status,
+      paymentMethod: data.paymentMethod || null,
+      failureReason: data.failureReason || null,
+      attemptCount: data.attemptCount || 1,
+      metadata: data.metadata || {}
+    });
+    console.log(`✅ [PAYMENT LOG] Payment attempt logged for user ${data.userId}`);
+  } catch (error) {
+    console.error(`❌ [PAYMENT LOG] Failed to log payment attempt:`, error);
+  }
+};
+
+/**
+ * Helper function to extract and store card details from Stripe
+ */
+const storeCardDetails = async (subscription, stripeSubscription) => {
+  try {
+    // Get the default payment method from the subscription
+    let paymentMethodId = stripeSubscription.default_payment_method;
+    
+    if (!paymentMethodId && stripeSubscription.latest_invoice) {
+      // Try to get payment method from latest invoice
+      const invoice = await stripe.invoices.retrieve(stripeSubscription.latest_invoice);
+      paymentMethodId = invoice.default_payment_method || invoice.payment_intent?.payment_method;
+    }
+
+    if (paymentMethodId) {
+      const paymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId);
+      
+      if (paymentMethod && paymentMethod.card) {
+        await subscription.update({
+          paymentMethodId: paymentMethodId,
+          cardLast4: paymentMethod.card.last4,
+          cardBrand: paymentMethod.card.brand,
+          cardExpMonth: paymentMethod.card.exp_month,
+          cardExpYear: paymentMethod.card.exp_year,
+          cardHolderName: paymentMethod.billing_details?.name || null,
+        });
+        
+        console.log(`✅ [CARD DETAILS] Stored card details for subscription ${subscription.id}`);
+      }
+    }
+  } catch (error) {
+    console.error(`❌ [CARD DETAILS] Failed to store card details:`, error);
+  }
+};
 
 o.createCheckoutSession = async function (req, res, next) {
   try {
@@ -392,6 +453,27 @@ o.handleCheckoutSessionCompleted = async (session) => {
         stripeSubscriptionId: newSub.stripeSubscriptionId,
         stripeCustomerId: newSub.stripeCustomerId,
       });
+
+      // Store card details from Stripe
+      await storeCardDetails(newSub, stripeSub);
+
+      // Log successful payment
+      await logPaymentAttempt({
+        userId: parseInt(userId, 10),
+        subscriptionId: newSub.id,
+        stripeInvoiceId: session.object === "invoice" ? session.id : null,
+        stripeCustomerId: stripeSub.customer,
+        amount: price,
+        currency: stripeSub.items.data[0]?.price?.currency || "usd",
+        status: "succeeded",
+        paymentMethod: stripeSub.default_payment_method,
+        metadata: {
+          type: "subscription_creation",
+          packageId: packageId,
+          webhookType: session.object
+        }
+      });
+
     } catch (createErr) {
       console.error("❌ [WEBHOOK] Subscription creation failed");
       console.error("❌ Error message:", createErr.message);
@@ -719,7 +801,7 @@ o.handleInvoicePaid = async (invoice) => {
     const stripeSub = await stripe.subscriptions.retrieve(subscriptionId);
     const userId = stripeSub.metadata.userId || existingSub.userId;
 
-    // Always extend from current time
+    // Calculate new expiry date based on subscription interval
     let expiryDate = new Date();
     const interval = stripeSub.plan?.interval || "month";
     const count = stripeSub.plan?.interval_count || 1;
@@ -733,10 +815,35 @@ o.handleInvoicePaid = async (invoice) => {
     }
 
     // Update subscription expiry in DB
-    await existingSub.update({ expiryDate, stripeCustomerId });
+    await existingSub.update({ 
+      expiryDate, 
+      stripeCustomerId,
+      status: "active",
+      isActive: true
+    });
+
+    // Store/update card details
+    await storeCardDetails(existingSub, stripeSub);
+
+    // Log successful payment
+    await logPaymentAttempt({
+      userId: parseInt(userId, 10),
+      subscriptionId: existingSub.id,
+      stripeInvoiceId: invoice.id,
+      stripeCustomerId: stripeCustomerId,
+      amount: invoice.amount_paid / 100, // Convert from cents
+      currency: invoice.currency,
+      status: "succeeded",
+      paymentMethod: invoice.default_payment_method,
+      metadata: {
+        type: "subscription_renewal",
+        invoiceId: invoice.id,
+        subscriptionId: subscriptionId
+      }
+    });
 
     console.log(
-      `🔁 Subscription renewed for user ${userId}, new expiry: ${expiryDate.toISOString()}`
+      `🔁 Subscription renewed for user ${userId} until ${expiryDate.toISOString()}`
     );
   } catch (err) {
     console.error("❌ Error handling invoice.payment_succeeded:", err.message);
@@ -749,17 +856,50 @@ o.handleInvoiceFailed = async (invoice) => {
     const customerId = invoice.customer;
 
     if (!customerId) {
-      throw new Error("Invoice has no subscription ID");
+      throw new Error("Invoice has no customer ID");
+    }
+
+    // Find the subscription in your database using customer ID
+    const existingSub = await Subscription.findOne({
+      where: { stripeCustomerId: customerId },
+    });
+
+    if (existingSub) {
+      // Update subscription status
+      await existingSub.update({
+        status: "past_due",
+        isActive: false
+      });
+
+      // Log failed payment
+      await logPaymentAttempt({
+        userId: existingSub.userId,
+        subscriptionId: existingSub.id,
+        stripeInvoiceId: invoice.id,
+        stripeCustomerId: customerId,
+        amount: invoice.amount_due / 100, // Convert from cents
+        currency: invoice.currency,
+        status: "failed",
+        failureReason: invoice.status_transitions?.finalized_at ? "Payment failed" : "Payment attempt failed",
+        attemptCount: invoice.attempt_count || 1,
+        metadata: {
+          type: "subscription_payment_failed",
+          invoiceId: invoice.id,
+          subscriptionId: existingSub.stripeSubscriptionId,
+          failureCode: invoice.last_finalization_error?.code || null
+        }
+      });
     }
 
     // Log the failed payment
-    console.log(`⚠️ Subscription payment failed for user, subscription`);
+    console.log(`⚠️ Subscription payment failed for customer ${customerId}`);
 
     // Optionally, log invoice info for debugging
     console.log("Invoice details:", {
       id: invoice.id,
       amount_due: invoice.amount_due,
       status: invoice.status,
+      attempt_count: invoice.attempt_count,
       created: new Date(invoice.created * 1000).toISOString(),
     });
   } catch (err) {
@@ -945,6 +1085,12 @@ o.checkActiveSubscription = async function (req, res, next) {
           model: db.User,
           as: "user",
         },
+        {
+          model: db.PaymentLog,
+          as: "paymentLogs",
+          limit: 5,
+          order: [["createdAt", "DESC"]],
+        }
       ],
     });
 
@@ -953,12 +1099,38 @@ o.checkActiveSubscription = async function (req, res, next) {
     }
 
     // Check if subscription is still active
-    const isActive = new Date(subscription.expiryDate) > new Date();
+    const now = new Date();
+    const expiryDate = new Date(subscription.expiryDate);
+    const isActive = expiryDate > now;
+
+    // Update subscription status if needed
+    if (!isActive && subscription.status === "active") {
+      await subscription.update({
+        status: "expired",
+        isActive: false
+      });
+    } else if (isActive && subscription.status !== "active") {
+      await subscription.update({
+        status: "active",
+        isActive: true
+      });
+    }
 
     const response = {
-      subscription,
+      subscription: {
+        ...subscription.toJSON(),
+        cardDetails: {
+          last4: subscription.cardLast4,
+          brand: subscription.cardBrand,
+          expMonth: subscription.cardExpMonth,
+          expYear: subscription.cardExpYear,
+          holderName: subscription.cardHolderName,
+          paymentMethodId: subscription.paymentMethodId
+        }
+      },
       isActive,
       status: isActive ? "ACTIVE" : "EXPIRED",
+      daysUntilExpiry: Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24)),
     };
 
     return json.showOne(res, response, 200);

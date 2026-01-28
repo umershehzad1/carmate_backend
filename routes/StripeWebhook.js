@@ -34,11 +34,16 @@ router.post(
 
     try {
       switch (event.type) {
-        case "invoice.payment_succeeded":
-          console.log("💳 Processing invoice.payment_succeeded");
+        case "checkout.session.completed":
+          console.log("🛒 Processing checkout.session.completed");
           await subscriptionCtrl.handleCheckoutSessionCompleted(
             event.data.object
           );
+          break;
+
+        case "invoice.payment_succeeded":
+          console.log("💳 Processing invoice.payment_succeeded");
+          await subscriptionCtrl.handleInvoicePaid(event.data.object);
           break;
 
         case "invoice.payment_failed":
