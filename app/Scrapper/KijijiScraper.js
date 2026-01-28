@@ -181,6 +181,24 @@ class KijijiScraper extends BaseScraper {
         sourceSite: this.name,
       };
 
+      // Fallback: Try to extract bodyType from title if not found in details
+      if (!vehicleData.bodyType && title) {
+        const titleBodyType = this.extractBodyType(title);
+        if (titleBodyType) {
+          vehicleData.bodyType = titleBodyType;
+          this.log(`Extracted bodyType from title: ${titleBodyType}`);
+        }
+      }
+
+      // Additional fallback: Infer from model name if still missing
+      if (!vehicleData.bodyType && vehicleData.model) {
+        const modelBodyType = this.inferBodyTypeFromModel(vehicleData.make, vehicleData.model);
+        if (modelBodyType) {
+          vehicleData.bodyType = modelBodyType;
+          this.log(`Inferred bodyType from model: ${modelBodyType}`);
+        }
+      }
+
       // If we have a detail URL, scrape detailed page for more info
       if (detailUrl) {
         try {
@@ -372,6 +390,12 @@ class KijijiScraper extends BaseScraper {
         const engineCC = this.extractEngineCC(feature);
         if (engineCC) details.engineCapacity = engineCC;
       }
+
+      // Enhanced bodyType extraction
+      const extractedBodyType = this.extractBodyType(feature);
+      if (extractedBodyType && !details.bodyType) {
+        details.bodyType = extractedBodyType;
+      }
     });
 
     return details;
@@ -465,8 +489,14 @@ class KijijiScraper extends BaseScraper {
       specs.transmission = value;
     } else if (lowerLabel.includes("fuel")) {
       specs.fuelType = value;
-    } else if (lowerLabel.includes("body")) {
-      specs.bodyType = value;
+    } else if (lowerLabel.includes("body") || lowerLabel.includes("type") || lowerLabel.includes("style")) {
+      // Enhanced bodyType extraction
+      const extractedBodyType = this.extractBodyType(value);
+      if (extractedBodyType) {
+        specs.bodyType = extractedBodyType;
+      } else {
+        specs.bodyType = this.capitalizeBodyType(value);
+      }
     } else if (lowerLabel.includes("color") || lowerLabel.includes("colour")) {
       specs.color = value;
       specs.exteriorColor = value;
@@ -492,6 +522,243 @@ class KijijiScraper extends BaseScraper {
     } else if (lowerLabel.includes("drive") || lowerLabel.includes("drivetrain")) {
       specs.drive = value;
     }
+  }
+
+  /**
+   * Enhanced bodyType extraction method (same as AutoTraderScraper)
+   */
+  extractBodyType(text) {
+    if (!text) return null;
+    
+    const lowerText = text.toLowerCase();
+    
+    // Direct body type matches (most common)
+    const bodyTypeMap = {
+      'sedan': 'Sedan',
+      'suv': 'SUV',
+      'crossover': 'SUV',
+      'truck': 'Truck',
+      'pickup': 'Truck',
+      'pickup truck': 'Truck',
+      'coupe': 'Coupe',
+      'hatchback': 'Hatchback',
+      'wagon': 'Wagon',
+      'station wagon': 'Wagon',
+      'van': 'Van',
+      'minivan': 'Van',
+      'convertible': 'Convertible',
+      'cabriolet': 'Convertible',
+      'roadster': 'Convertible',
+      'sports car': 'Coupe',
+      'compact': 'Hatchback',
+      'subcompact': 'Hatchback',
+      'mid-size': 'Sedan',
+      'full-size': 'Sedan',
+      'luxury': 'Sedan'
+    };
+
+    // Check for direct matches first
+    for (const [keyword, bodyType] of Object.entries(bodyTypeMap)) {
+      if (lowerText.includes(keyword)) {
+        return bodyType;
+      }
+    }
+
+    // Check for body type with colon format (e.g., "Body Type: Sedan")
+    const bodyColonMatch = text.match(/body\s*(?:type|style)?[:\s]+([^,\n\r]+)/i);
+    if (bodyColonMatch) {
+      const extractedType = bodyColonMatch[1].trim();
+      // Map the extracted type to standard format
+      for (const [keyword, bodyType] of Object.entries(bodyTypeMap)) {
+        if (extractedType.toLowerCase().includes(keyword)) {
+          return bodyType;
+        }
+      }
+      // If no mapping found, return the extracted type as-is (capitalized)
+      return this.capitalizeBodyType(extractedType);
+    }
+
+    return null;
+  }
+
+  /**
+   * Capitalize body type properly
+   */
+  capitalizeBodyType(bodyType) {
+    if (!bodyType) return null;
+    
+    // Handle special cases
+    const specialCases = {
+      'suv': 'SUV',
+      'rv': 'RV',
+      'atv': 'ATV',
+      'utv': 'UTV'
+    };
+    
+    const lower = bodyType.toLowerCase();
+    if (specialCases[lower]) {
+      return specialCases[lower];
+    }
+    
+    // Standard capitalization
+    return bodyType.split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
+  }
+
+  /**
+   * Infer body type from make and model combination
+   */
+  inferBodyTypeFromModel(make, model) {
+    if (!make || !model) return null;
+    
+    const lowerMake = make.toLowerCase();
+    const lowerModel = model.toLowerCase();
+    
+    // Comprehensive model-to-bodyType mapping (same as AutoTraderScraper)
+    const modelMap = {
+      // Toyota
+      'camry': 'Sedan',
+      'corolla': 'Sedan',
+      'avalon': 'Sedan',
+      'prius': 'Hatchback',
+      'rav4': 'SUV',
+      'highlander': 'SUV',
+      '4runner': 'SUV',
+      'sequoia': 'SUV',
+      'land cruiser': 'SUV',
+      'tacoma': 'Truck',
+      'tundra': 'Truck',
+      'sienna': 'Van',
+      
+      // Honda
+      'civic': 'Sedan',
+      'accord': 'Sedan',
+      'insight': 'Sedan',
+      'cr-v': 'SUV',
+      'hr-v': 'SUV',
+      'pilot': 'SUV',
+      'passport': 'SUV',
+      'ridgeline': 'Truck',
+      'odyssey': 'Van',
+      'fit': 'Hatchback',
+      
+      // Ford
+      'focus': 'Sedan',
+      'fusion': 'Sedan',
+      'mustang': 'Coupe',
+      'escape': 'SUV',
+      'explorer': 'SUV',
+      'expedition': 'SUV',
+      'edge': 'SUV',
+      'bronco': 'SUV',
+      'f-150': 'Truck',
+      'f-250': 'Truck',
+      'f-350': 'Truck',
+      'ranger': 'Truck',
+      'transit': 'Van',
+      
+      // Chevrolet
+      'malibu': 'Sedan',
+      'impala': 'Sedan',
+      'cruze': 'Sedan',
+      'camaro': 'Coupe',
+      'corvette': 'Coupe',
+      'equinox': 'SUV',
+      'traverse': 'SUV',
+      'tahoe': 'SUV',
+      'suburban': 'SUV',
+      'blazer': 'SUV',
+      'silverado': 'Truck',
+      'colorado': 'Truck',
+      'express': 'Van',
+      
+      // Nissan
+      'altima': 'Sedan',
+      'sentra': 'Sedan',
+      'maxima': 'Sedan',
+      'versa': 'Sedan',
+      'rogue': 'SUV',
+      'murano': 'SUV',
+      'pathfinder': 'SUV',
+      'armada': 'SUV',
+      'kicks': 'SUV',
+      'frontier': 'Truck',
+      'titan': 'Truck',
+      'nv200': 'Van',
+      '370z': 'Coupe',
+      
+      // Tesla
+      'model s': 'Sedan',
+      'model 3': 'Sedan',
+      'model x': 'SUV',
+      'model y': 'SUV',
+      'cybertruck': 'Truck',
+      'roadster': 'Convertible'
+    };
+    
+    // Check for exact model match
+    if (modelMap[lowerModel]) {
+      return modelMap[lowerModel];
+    }
+    
+    // Check for partial model match
+    for (const [modelKey, bodyType] of Object.entries(modelMap)) {
+      if (lowerModel.includes(modelKey) || modelKey.includes(lowerModel)) {
+        return bodyType;
+      }
+    }
+    
+    // Check for common patterns in model names
+    if (lowerModel.includes('sedan')) return 'Sedan';
+    if (lowerModel.includes('coupe')) return 'Coupe';
+    if (lowerModel.includes('convertible')) return 'Convertible';
+    if (lowerModel.includes('wagon')) return 'Wagon';
+    if (lowerModel.includes('hatchback')) return 'Hatchback';
+    
+    // SUV patterns
+    if (lowerModel.includes('suv') || 
+        lowerModel.includes('crossover') ||
+        lowerModel.startsWith('cx-') ||
+        lowerModel.startsWith('qx') ||
+        lowerModel.startsWith('rx') ||
+        lowerModel.startsWith('gx') ||
+        lowerModel.startsWith('lx') ||
+        lowerModel.startsWith('x') && lowerMake === 'bmw') {
+      return 'SUV';
+    }
+    
+    // Truck patterns
+    if (lowerModel.includes('truck') ||
+        lowerModel.includes('pickup') ||
+        lowerModel.startsWith('f-') ||
+        lowerModel.includes('silverado') ||
+        lowerModel.includes('sierra') ||
+        lowerModel.includes('ram') ||
+        lowerModel.includes('tundra') ||
+        lowerModel.includes('tacoma') ||
+        lowerModel.includes('frontier') ||
+        lowerModel.includes('titan') ||
+        lowerModel.includes('colorado') ||
+        lowerModel.includes('canyon') ||
+        lowerModel.includes('ranger')) {
+      return 'Truck';
+    }
+    
+    // Van patterns
+    if (lowerModel.includes('van') ||
+        lowerModel.includes('transit') ||
+        lowerModel.includes('express') ||
+        lowerModel.includes('savana') ||
+        lowerModel.includes('promaster') ||
+        lowerModel.includes('sprinter') ||
+        lowerModel.includes('sienna') ||
+        lowerModel.includes('odyssey') ||
+        lowerModel.includes('pacifica')) {
+      return 'Van';
+    }
+    
+    return null;
   }
 
   /**

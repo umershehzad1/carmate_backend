@@ -265,6 +265,24 @@ class AutoTraderScraper extends BaseScraper {
         sourceSite: this.name,
       };
 
+      // Fallback: Try to extract bodyType from title if not found in details
+      if (!vehicleData.bodyType && title) {
+        const titleBodyType = this.extractBodyType(title);
+        if (titleBodyType) {
+          vehicleData.bodyType = titleBodyType;
+          this.log(`Extracted bodyType from title: ${titleBodyType}`);
+        }
+      }
+
+      // Additional fallback: Infer from model name if still missing
+      if (!vehicleData.bodyType && vehicleData.model) {
+        const modelBodyType = this.inferBodyTypeFromModel(vehicleData.make, vehicleData.model);
+        if (modelBodyType) {
+          vehicleData.bodyType = modelBodyType;
+          this.log(`Inferred bodyType from model: ${modelBodyType}`);
+        }
+      }
+
       // If we have a detail URL, scrape detailed page for more info
       if (detailUrl) {
         try {
@@ -702,21 +720,6 @@ class AutoTraderScraper extends BaseScraper {
       details.registerIn = details.registeredIn;
     } else if (lowerText.includes("assembly") || lowerText.includes("assembled")) {
       details.assemblyIn = text.replace(/assembled?\s*(in)?[:\s]*/gi, '').trim();
-    } else if (lowerText.includes("body") || lowerText.includes("sedan") || lowerText.includes("suv") || 
-               lowerText.includes("truck") || lowerText.includes("coupe") || lowerText.includes("hatchback") ||
-               lowerText.includes("wagon") || lowerText.includes("van") || lowerText.includes("convertible")) {
-      if (lowerText.includes("sedan")) details.bodyType = "Sedan";
-      else if (lowerText.includes("suv")) details.bodyType = "SUV";
-      else if (lowerText.includes("truck") || lowerText.includes("pickup")) details.bodyType = "Truck";
-      else if (lowerText.includes("coupe")) details.bodyType = "Coupe";
-      else if (lowerText.includes("hatchback")) details.bodyType = "Hatchback";
-      else if (lowerText.includes("wagon")) details.bodyType = "Wagon";
-      else if (lowerText.includes("van") || lowerText.includes("minivan")) details.bodyType = "Van";
-      else if (lowerText.includes("convertible")) details.bodyType = "Convertible";
-      else if (text.match(/body/i)) {
-        const bodyMatch = text.match(/body[:\s]+(.+)/i);
-        if (bodyMatch) details.bodyType = bodyMatch[1].trim();
-      }
     } else if (lowerText.includes("mpg") || lowerText.includes("l/100") || lowerText.includes("fuel economy") || lowerText.includes("fuel consumption")) {
       details.fuelConsumption = text;
     } else if (lowerText.includes("vin") && text.length < 30) {
@@ -724,6 +727,427 @@ class AutoTraderScraper extends BaseScraper {
     } else if (lowerText.includes("stock") && text.length < 30) {
       details.stockNumber = text.replace(/stock[:\s]*/i, '').trim();
     }
+
+    // Enhanced bodyType extraction - moved to separate method for better handling
+    const extractedBodyType = this.extractBodyType(text);
+    if (extractedBodyType && !details.bodyType) {
+      details.bodyType = extractedBodyType;
+    }
+  }
+
+  /**
+   * Enhanced bodyType extraction method
+   * Handles various formats and patterns found on AutoTrader
+   */
+  extractBodyType(text) {
+    if (!text) return null;
+    
+    const lowerText = text.toLowerCase();
+    
+    // Direct body type matches (most common)
+    const bodyTypeMap = {
+      'sedan': 'Sedan',
+      'suv': 'SUV',
+      'crossover': 'SUV',
+      'truck': 'Truck',
+      'pickup': 'Truck',
+      'pickup truck': 'Truck',
+      'coupe': 'Coupe',
+      'hatchback': 'Hatchback',
+      'wagon': 'Wagon',
+      'station wagon': 'Wagon',
+      'van': 'Van',
+      'minivan': 'Van',
+      'convertible': 'Convertible',
+      'cabriolet': 'Convertible',
+      'roadster': 'Convertible',
+      'sports car': 'Coupe',
+      'compact': 'Hatchback',
+      'subcompact': 'Hatchback',
+      'mid-size': 'Sedan',
+      'full-size': 'Sedan',
+      'luxury': 'Sedan'
+    };
+
+    // Check for direct matches first
+    for (const [keyword, bodyType] of Object.entries(bodyTypeMap)) {
+      if (lowerText.includes(keyword)) {
+        return bodyType;
+      }
+    }
+
+    // Check for body type with colon format (e.g., "Body Type: Sedan")
+    const bodyColonMatch = text.match(/body\s*(?:type|style)?[:\s]+([^,\n\r]+)/i);
+    if (bodyColonMatch) {
+      const extractedType = bodyColonMatch[1].trim();
+      // Map the extracted type to standard format
+      for (const [keyword, bodyType] of Object.entries(bodyTypeMap)) {
+        if (extractedType.toLowerCase().includes(keyword)) {
+          return bodyType;
+        }
+      }
+      // If no mapping found, return the extracted type as-is (capitalized)
+      return this.capitalizeBodyType(extractedType);
+    }
+
+    // Check for style patterns (e.g., "4-Door Sedan", "2-Door Coupe")
+    const styleMatch = text.match(/(\d+[-\s]?door\s+)?([a-z]+(?:\s+[a-z]+)?)/i);
+    if (styleMatch) {
+      const potentialBodyType = styleMatch[2].toLowerCase();
+      for (const [keyword, bodyType] of Object.entries(bodyTypeMap)) {
+        if (potentialBodyType.includes(keyword)) {
+          return bodyType;
+        }
+      }
+    }
+
+    // Check for specific AutoTrader patterns
+    if (lowerText.includes('4dr') || lowerText.includes('4-dr')) {
+      if (lowerText.includes('sedan') || lowerText.includes('sdn')) return 'Sedan';
+      if (lowerText.includes('suv')) return 'SUV';
+    }
+    
+    if (lowerText.includes('2dr') || lowerText.includes('2-dr')) {
+      if (lowerText.includes('coupe') || lowerText.includes('cpe')) return 'Coupe';
+      if (lowerText.includes('convertible')) return 'Convertible';
+    }
+
+    // Check for model-based inference (common model names that indicate body type)
+    const modelBodyTypeMap = {
+      'civic': 'Sedan',
+      'accord': 'Sedan',
+      'camry': 'Sedan',
+      'corolla': 'Sedan',
+      'altima': 'Sedan',
+      'sentra': 'Sedan',
+      'cr-v': 'SUV',
+      'rav4': 'SUV',
+      'pilot': 'SUV',
+      'highlander': 'SUV',
+      'explorer': 'SUV',
+      'tahoe': 'SUV',
+      'f-150': 'Truck',
+      'silverado': 'Truck',
+      'ram': 'Truck',
+      'sierra': 'Truck',
+      'mustang': 'Coupe',
+      'camaro': 'Coupe',
+      'challenger': 'Coupe',
+      'wrangler': 'SUV',
+      'prius': 'Hatchback',
+      'fit': 'Hatchback',
+      'yaris': 'Hatchback'
+    };
+
+    for (const [model, bodyType] of Object.entries(modelBodyTypeMap)) {
+      if (lowerText.includes(model)) {
+        return bodyType;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Capitalize body type properly
+   */
+  capitalizeBodyType(bodyType) {
+    if (!bodyType) return null;
+    
+    // Handle special cases
+    const specialCases = {
+      'suv': 'SUV',
+      'rv': 'RV',
+      'atv': 'ATV',
+      'utv': 'UTV'
+    };
+    
+    const lower = bodyType.toLowerCase();
+    if (specialCases[lower]) {
+      return specialCases[lower];
+    }
+    
+    // Standard capitalization
+    return bodyType.split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
+  }
+
+  /**
+   * Infer body type from make and model combination
+   */
+  inferBodyTypeFromModel(make, model) {
+    if (!make || !model) return null;
+    
+    const lowerMake = make.toLowerCase();
+    const lowerModel = model.toLowerCase();
+    
+    // Comprehensive model-to-bodyType mapping
+    const modelMap = {
+      // Toyota
+      'camry': 'Sedan',
+      'corolla': 'Sedan',
+      'avalon': 'Sedan',
+      'prius': 'Hatchback',
+      'rav4': 'SUV',
+      'highlander': 'SUV',
+      '4runner': 'SUV',
+      'sequoia': 'SUV',
+      'land cruiser': 'SUV',
+      'tacoma': 'Truck',
+      'tundra': 'Truck',
+      'sienna': 'Van',
+      
+      // Honda
+      'civic': 'Sedan',
+      'accord': 'Sedan',
+      'insight': 'Sedan',
+      'cr-v': 'SUV',
+      'hr-v': 'SUV',
+      'pilot': 'SUV',
+      'passport': 'SUV',
+      'ridgeline': 'Truck',
+      'odyssey': 'Van',
+      'fit': 'Hatchback',
+      
+      // Ford
+      'focus': 'Sedan',
+      'fusion': 'Sedan',
+      'mustang': 'Coupe',
+      'escape': 'SUV',
+      'explorer': 'SUV',
+      'expedition': 'SUV',
+      'edge': 'SUV',
+      'bronco': 'SUV',
+      'f-150': 'Truck',
+      'f-250': 'Truck',
+      'f-350': 'Truck',
+      'ranger': 'Truck',
+      'transit': 'Van',
+      
+      // Chevrolet
+      'malibu': 'Sedan',
+      'impala': 'Sedan',
+      'cruze': 'Sedan',
+      'camaro': 'Coupe',
+      'corvette': 'Coupe',
+      'equinox': 'SUV',
+      'traverse': 'SUV',
+      'tahoe': 'SUV',
+      'suburban': 'SUV',
+      'blazer': 'SUV',
+      'silverado': 'Truck',
+      'colorado': 'Truck',
+      'express': 'Van',
+      
+      // Nissan
+      'altima': 'Sedan',
+      'sentra': 'Sedan',
+      'maxima': 'Sedan',
+      'versa': 'Sedan',
+      'rogue': 'SUV',
+      'murano': 'SUV',
+      'pathfinder': 'SUV',
+      'armada': 'SUV',
+      'kicks': 'SUV',
+      'frontier': 'Truck',
+      'titan': 'Truck',
+      'nv200': 'Van',
+      '370z': 'Coupe',
+      
+      // BMW
+      '3 series': 'Sedan',
+      '5 series': 'Sedan',
+      '7 series': 'Sedan',
+      'x1': 'SUV',
+      'x3': 'SUV',
+      'x5': 'SUV',
+      'x7': 'SUV',
+      'z4': 'Convertible',
+      
+      // Mercedes-Benz
+      'c-class': 'Sedan',
+      'e-class': 'Sedan',
+      's-class': 'Sedan',
+      'a-class': 'Sedan',
+      'gla': 'SUV',
+      'glb': 'SUV',
+      'glc': 'SUV',
+      'gle': 'SUV',
+      'gls': 'SUV',
+      'g-class': 'SUV',
+      'slc': 'Convertible',
+      
+      // Audi
+      'a3': 'Sedan',
+      'a4': 'Sedan',
+      'a6': 'Sedan',
+      'a8': 'Sedan',
+      'q3': 'SUV',
+      'q5': 'SUV',
+      'q7': 'SUV',
+      'q8': 'SUV',
+      'tt': 'Coupe',
+      
+      // Jeep
+      'wrangler': 'SUV',
+      'grand cherokee': 'SUV',
+      'cherokee': 'SUV',
+      'compass': 'SUV',
+      'renegade': 'SUV',
+      'gladiator': 'Truck',
+      
+      // RAM
+      '1500': 'Truck',
+      '2500': 'Truck',
+      '3500': 'Truck',
+      'promaster': 'Van',
+      
+      // Hyundai
+      'elantra': 'Sedan',
+      'sonata': 'Sedan',
+      'accent': 'Sedan',
+      'tucson': 'SUV',
+      'santa fe': 'SUV',
+      'palisade': 'SUV',
+      'kona': 'SUV',
+      'venue': 'SUV',
+      
+      // Kia
+      'forte': 'Sedan',
+      'optima': 'Sedan',
+      'rio': 'Sedan',
+      'sportage': 'SUV',
+      'sorento': 'SUV',
+      'telluride': 'SUV',
+      'soul': 'SUV',
+      'seltos': 'SUV',
+      
+      // Mazda
+      'mazda3': 'Sedan',
+      'mazda6': 'Sedan',
+      'cx-3': 'SUV',
+      'cx-5': 'SUV',
+      'cx-9': 'SUV',
+      'mx-5': 'Convertible',
+      
+      // Subaru
+      'impreza': 'Sedan',
+      'legacy': 'Sedan',
+      'outback': 'Wagon',
+      'forester': 'SUV',
+      'ascent': 'SUV',
+      'crosstrek': 'SUV',
+      'wrx': 'Sedan',
+      'brz': 'Coupe',
+      
+      // Volkswagen
+      'jetta': 'Sedan',
+      'passat': 'Sedan',
+      'golf': 'Hatchback',
+      'tiguan': 'SUV',
+      'atlas': 'SUV',
+      'touareg': 'SUV',
+      'beetle': 'Hatchback',
+      
+      // Lexus
+      'es': 'Sedan',
+      'is': 'Sedan',
+      'ls': 'Sedan',
+      'gs': 'Sedan',
+      'nx': 'SUV',
+      'rx': 'SUV',
+      'gx': 'SUV',
+      'lx': 'SUV',
+      'lc': 'Coupe',
+      
+      // Acura
+      'ilx': 'Sedan',
+      'tlx': 'Sedan',
+      'rlx': 'Sedan',
+      'rdx': 'SUV',
+      'mdx': 'SUV',
+      'nsx': 'Coupe',
+      
+      // Infiniti
+      'q50': 'Sedan',
+      'q60': 'Coupe',
+      'q70': 'Sedan',
+      'qx50': 'SUV',
+      'qx60': 'SUV',
+      'qx80': 'SUV',
+      
+      // Tesla
+      'model s': 'Sedan',
+      'model 3': 'Sedan',
+      'model x': 'SUV',
+      'model y': 'SUV',
+      'cybertruck': 'Truck',
+      'roadster': 'Convertible'
+    };
+    
+    // Check for exact model match
+    if (modelMap[lowerModel]) {
+      return modelMap[lowerModel];
+    }
+    
+    // Check for partial model match
+    for (const [modelKey, bodyType] of Object.entries(modelMap)) {
+      if (lowerModel.includes(modelKey) || modelKey.includes(lowerModel)) {
+        return bodyType;
+      }
+    }
+    
+    // Check for common patterns in model names
+    if (lowerModel.includes('sedan')) return 'Sedan';
+    if (lowerModel.includes('coupe')) return 'Coupe';
+    if (lowerModel.includes('convertible')) return 'Convertible';
+    if (lowerModel.includes('wagon')) return 'Wagon';
+    if (lowerModel.includes('hatchback')) return 'Hatchback';
+    
+    // SUV patterns
+    if (lowerModel.includes('suv') || 
+        lowerModel.includes('crossover') ||
+        lowerModel.startsWith('cx-') ||
+        lowerModel.startsWith('qx') ||
+        lowerModel.startsWith('rx') ||
+        lowerModel.startsWith('gx') ||
+        lowerModel.startsWith('lx') ||
+        lowerModel.startsWith('x') && lowerMake === 'bmw') {
+      return 'SUV';
+    }
+    
+    // Truck patterns
+    if (lowerModel.includes('truck') ||
+        lowerModel.includes('pickup') ||
+        lowerModel.startsWith('f-') ||
+        lowerModel.includes('silverado') ||
+        lowerModel.includes('sierra') ||
+        lowerModel.includes('ram') ||
+        lowerModel.includes('tundra') ||
+        lowerModel.includes('tacoma') ||
+        lowerModel.includes('frontier') ||
+        lowerModel.includes('titan') ||
+        lowerModel.includes('colorado') ||
+        lowerModel.includes('canyon') ||
+        lowerModel.includes('ranger')) {
+      return 'Truck';
+    }
+    
+    // Van patterns
+    if (lowerModel.includes('van') ||
+        lowerModel.includes('transit') ||
+        lowerModel.includes('express') ||
+        lowerModel.includes('savana') ||
+        lowerModel.includes('promaster') ||
+        lowerModel.includes('sprinter') ||
+        lowerModel.includes('sienna') ||
+        lowerModel.includes('odyssey') ||
+        lowerModel.includes('pacifica')) {
+      return 'Van';
+    }
+    
+    return null;
   }
 
   /**
@@ -736,7 +1160,7 @@ class AutoTraderScraper extends BaseScraper {
       mileage: ["mileage", "km", "kilometers", "odometer"],
       transmission: ["transmission"],
       fuelType: ["fuel", "fuel type", "gas", "gasoline"],
-      bodyType: ["body type", "body", "body style"],
+      bodyType: ["body type", "body", "body style", "style", "vehicle type", "type"],
       color: ["color", "colour", "exterior color", "exterior colour", "paint"],
       exteriorColor: ["exterior color", "exterior colour", "paint color"],
       engineCapacity: ["engine", "engine capacity", "engine size", "cc", "displacement", "litre", "liter", "cylinder"],
@@ -776,6 +1200,16 @@ class AutoTraderScraper extends BaseScraper {
           const engineCC = this.extractEngineCC(value);
           if (engineCC) {
             specs[field] = engineCC;
+          }
+        }
+        // Special handling for bodyType
+        else if (field === "bodyType") {
+          const extractedBodyType = this.extractBodyType(value);
+          if (extractedBodyType) {
+            specs[field] = extractedBodyType;
+          } else {
+            // Fallback to cleaned value
+            specs[field] = this.capitalizeBodyType(value);
           }
         }
         // For all other fields, save the value as-is

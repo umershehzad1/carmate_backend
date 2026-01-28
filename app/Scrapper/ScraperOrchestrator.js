@@ -466,6 +466,13 @@ class ScraperOrchestrator {
       else if (normCondition.includes("cert")) normCondition = "certified";
       else normCondition = "used";
 
+      // Log bodyType information for debugging
+      if (vehicleData.bodyType) {
+        this.log(`✅ bodyType found: ${vehicleData.bodyType} for ${name}`, "success");
+      } else {
+        this.log(`⚠️  bodyType missing for ${name} - will be null in database`, "warn");
+      }
+
       const vehiclePayload = {
         dealerId: dealerId,
         name: name,
