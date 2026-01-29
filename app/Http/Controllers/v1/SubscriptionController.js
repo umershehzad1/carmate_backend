@@ -282,34 +282,8 @@ o.handleCheckoutSessionCompleted = async (session) => {
     let stripeSub;
     let subscriptionId;
 
-    // ✅ Detect object type and extract metadata accordingly
-    if (session.object === "invoice") {
-      console.log("📌 [WEBHOOK] Processing Invoice object");
-
-      // For invoices, subscription ID is in parent.subscription_details.subscription
-      subscriptionId = session.parent?.subscription_details?.subscription;
-
-      if (!subscriptionId) {
-        console.error(
-          "❌ [WEBHOOK] No subscription ID found in invoice parent"
-        );
-        throw new Error("No subscription ID found in invoice");
-      }
-
-      console.log(
-        `🔍 [WEBHOOK] Retrieved subscription ID from invoice: ${subscriptionId}`
-      );
-
-      // Retrieve the subscription from the invoice
-      stripeSub = await stripe.subscriptions.retrieve(subscriptionId);
-      console.log("🔍 [WEBHOOK] Retrieved subscription from invoice");
-
-      // Get metadata from subscription
-      ({ userId, packageId } = stripeSub.metadata || {});
-      console.log(
-        `📍 [WEBHOOK] Extracted metadata from subscription - userId: ${userId}, packageId: ${packageId}`
-      );
-    } else if (session.object === "checkout.session") {
+    // ✅ Handle checkout.session object only (this is the initial subscription creation)
+    if (session.object === "checkout.session") {
       console.log("📌 [WEBHOOK] Processing Checkout Session object");
 
       // For checkout sessions, subscription ID is directly in session
@@ -336,8 +310,8 @@ o.handleCheckoutSessionCompleted = async (session) => {
       stripeSub = await stripe.subscriptions.retrieve(subscriptionId);
       console.log("🔍 [WEBHOOK] Retrieved subscription from checkout session");
     } else {
-      console.error(`❌ [WEBHOOK] Unknown object type: ${session.object}`);
-      throw new Error(`Unknown webhook object type: ${session.object}`);
+      console.error(`❌ [WEBHOOK] Unexpected object type in checkout handler: ${session.object}`);
+      throw new Error(`Unexpected webhook object type in checkout handler: ${session.object}`);
     }
 
     // ✅ Convert userId and packageId to integers
@@ -419,10 +393,70 @@ o.handleCheckoutSessionCompleted = async (session) => {
     const price = stripeSub.items.data[0]?.price?.unit_amount / 100 || 0;
     console.log(`💰 [WEBHOOK] Price: $${price}`);
 
-    // --- ALWAYS CREATE NEW SUBSCRIPTION ---
-    console.log(
-      `📝 [WEBHOOK] Creating new subscription for userId: ${userId}...`
-    );
+    // --- CHECK FOR EXISTING SUBSCRIPTION AND UPDATE OR CREATE ---
+    console.log(`🔍 [WEBHOOK] Checking for existing subscription for userId: ${userId}...`);
+    
+    const existingSubscription = await Subscription.findOne({
+      where: { userId: parseInt(userId, 10) },
+      order: [['createdAt', 'DESC']] // Get the most recent subscription
+    });
+
+    let subscription;
+
+    if (existingSubscription) {
+      console.log(`📝 [WEBHOOK] Found existing subscription (ID: ${existingSubscription.id}), updating...`);
+      console.log(`📝 [WEBHOOK] Old data:`, {
+        id: existingSubscription.id,
+        plan: existingSubscription.plan,
+        price: existingSubscription.price,
+        expiryDate: existingSubscription.expiryDate?.toISOString?.(),
+        stripeSubscriptionId: existingSubscription.stripeSubscriptionId,
+        stripeCustomerId: existingSubscription.stripeCustomerId,
+      });
+
+      // Update existing subscription
+      const updateData = {
+        packageId: parseInt(packageId, 10),
+        plan: String(packageData.package).trim(),
+        price: `${price}`,
+        expiryDate: expiryDate instanceof Date ? expiryDate : new Date(expiryDate),
+        stripeSubscriptionId: String(stripeSub.id).trim(),
+        stripeCustomerId: String(stripeSub.customer).trim(),
+        status: "active",
+        isActive: true,
+      };
+
+      console.log(`📝 [WEBHOOK] Update data:`, updateData);
+
+      try {
+        await existingSubscription.update(updateData, {
+          logging: (sql) => console.log(`📝 [SQL]: ${sql}`),
+        });
+
+        subscription = existingSubscription;
+        console.log(`✅ [WEBHOOK] Subscription updated successfully:`, {
+          id: subscription.id,
+          userId: subscription.userId,
+          packageId: packageId,
+          plan: subscription.plan,
+          price: subscription.price,
+          expiryDate: subscription.expiryDate?.toISOString?.(),
+          stripeSubscriptionId: subscription.stripeSubscriptionId,
+          stripeCustomerId: subscription.stripeCustomerId,
+        });
+
+      } catch (updateErr) {
+        console.error("❌ [WEBHOOK] Subscription update failed");
+        console.error("❌ Error message:", updateErr.message);
+        if (updateErr.errors) {
+          console.error("❌ Validation errors:", updateErr.errors);
+        }
+        console.error("❌ Full error:", updateErr);
+        throw updateErr;
+      }
+
+    } else {
+      console.log(`📝 [WEBHOOK] No existing subscription found, creating new one...`);
 
     const subscriptionData = {
       userId: parseInt(userId, 10),
@@ -438,29 +472,29 @@ o.handleCheckoutSessionCompleted = async (session) => {
     console.log(`📝 [WEBHOOK] Subscription data:`, subscriptionData);
 
     try {
-      const newSub = await Subscription.create(subscriptionData, {
+        subscription = await Subscription.create(subscriptionData, {
         validate: false,
         logging: (sql) => console.log(`📝 [SQL]: ${sql}`),
       });
 
-      console.log(`✅ [WEBHOOK] New subscription created:`, {
-        id: newSub.id,
-        userId: newSub.userId,
-        packageId: newSub.packageId,
-        plan: newSub.plan,
-        price: newSub.price,
-        expiryDate: newSub.expiryDate?.toISOString?.(),
-        stripeSubscriptionId: newSub.stripeSubscriptionId,
-        stripeCustomerId: newSub.stripeCustomerId,
-      });
+        console.log(`✅ [WEBHOOK] New subscription created:`, {
+          id: subscription.id,
+          userId: subscription.userId,
+          packageId: subscription.packageId,
+          plan: subscription.plan,
+          price: subscription.price,
+          expiryDate: subscription.expiryDate?.toISOString?.(),
+          stripeSubscriptionId: subscription.stripeSubscriptionId,
+          stripeCustomerId: subscription.stripeCustomerId,
+        });
 
       // Store card details from Stripe
-      await storeCardDetails(newSub, stripeSub);
+      await storeCardDetails(subscription, stripeSub);
 
       // Log successful payment
       await logPaymentAttempt({
         userId: parseInt(userId, 10),
-        subscriptionId: newSub.id,
+        subscriptionId: subscription.id,
         stripeInvoiceId: session.object === "invoice" ? session.id : null,
         stripeCustomerId: stripeSub.customer,
         amount: price,
@@ -483,6 +517,27 @@ o.handleCheckoutSessionCompleted = async (session) => {
       console.error("❌ Full error:", createErr);
       throw createErr;
     }
+    }
+
+    // Store card details from Stripe
+    await storeCardDetails(subscription, stripeSub);
+
+    // Log successful payment
+    await logPaymentAttempt({
+      userId: parseInt(userId, 10),
+      subscriptionId: subscription.id,
+      stripeInvoiceId: session.object === "invoice" ? session.id : null,
+      stripeCustomerId: stripeSub.customer,
+      amount: price,
+      currency: stripeSub.items.data[0]?.price?.currency || "usd",
+      status: "succeeded",
+      paymentMethod: stripeSub.default_payment_method,
+      metadata: {
+        type: existingSubscription ? "subscription_update" : "subscription_creation",
+        packageId: packageId,
+        webhookType: session.object
+      }
+    });
 
     // --- Retrieve user ---
     console.log(`🔍 [WEBHOOK] Retrieving user ${userId}...`);
@@ -779,58 +834,220 @@ o.handleCheckoutSessionCompleted = async (session) => {
 
 o.handleInvoicePaid = async (invoice) => {
   try {
+    console.log("💳 [INVOICE] Processing invoice payment:", invoice.id);
+    
     // Get the customer ID from the invoice
     const stripeCustomerId = invoice.customer;
     if (!stripeCustomerId) throw new Error("Invoice has no customer ID");
 
-    // Find the subscription in your database using customer ID
-    const existingSub = await Subscription.findOne({
-      where: { stripeCustomerId },
-    });
+    console.log(`🔍 [INVOICE] Customer ID: ${stripeCustomerId}`);
 
-    if (!existingSub) {
-      console.warn(
-        `⚠️ No subscription found in DB for customer ${stripeCustomerId}`
-      );
+    // Get subscription ID from invoice
+    const subscriptionId = invoice.subscription;
+    if (!subscriptionId) {
+      console.log("⚠️ [INVOICE] No subscription ID in invoice - might be one-time payment");
       return;
     }
 
-    const subscriptionId = existingSub.stripeSubscriptionId;
+    console.log(`🔍 [INVOICE] Subscription ID: ${subscriptionId}`);
 
     // Retrieve subscription details from Stripe
     const stripeSub = await stripe.subscriptions.retrieve(subscriptionId);
-    const userId = stripeSub.metadata.userId || existingSub.userId;
+    console.log(`✅ [INVOICE] Retrieved Stripe subscription: ${stripeSub.id}`);
+
+    // Get metadata from subscription
+    const { userId, packageId } = stripeSub.metadata || {};
+    console.log(`📍 [INVOICE] Metadata - userId: ${userId}, packageId: ${packageId}`);
+
+    if (!userId) {
+      console.error("❌ [INVOICE] No userId in subscription metadata");
+      return;
+    }
+
+    // Check if this is the first payment (subscription creation) or renewal
+    const existingSub = await Subscription.findOne({
+      where: { stripeSubscriptionId: subscriptionId },
+    });
+
+    if (!existingSub) {
+      console.log("🆕 [INVOICE] First payment - creating new subscription");
+      
+      // This is the first payment, create subscription (similar to checkout.session.completed)
+      if (!packageId) {
+        console.error("❌ [INVOICE] No packageId in metadata for new subscription");
+        return;
+      }
+
+      // Call the same handler as checkout.session.completed but with invoice data
+      await this.createSubscriptionFromInvoice(invoice, stripeSub, parseInt(userId, 10), parseInt(packageId, 10));
+    } else {
+      console.log("🔄 [INVOICE] Renewal payment - updating existing subscription");
+      
+      // This is a renewal, update existing subscription
+      await this.renewExistingSubscription(existingSub, stripeSub, invoice);
+    }
+
+    console.log(`✅ [INVOICE] Successfully processed invoice payment for user ${userId}`);
+  } catch (err) {
+    console.error("❌ [INVOICE] Error handling invoice.payment_succeeded:", err.message);
+    console.error("❌ [INVOICE] Full error:", err);
+  }
+};
+
+// New method to create subscription from invoice (first payment)
+o.createSubscriptionFromInvoice = async (invoice, stripeSub, userId, packageId) => {
+  try {
+    console.log(`📝 [INVOICE-CREATE] Creating subscription for userId: ${userId}, packageId: ${packageId}`);
+
+    // Validate inputs
+    if (!userId || !packageId || isNaN(userId) || isNaN(packageId)) {
+      console.error("❌ [INVOICE-CREATE] Missing userId or packageId");
+      throw new Error(`Missing userId (${userId}) or packageId (${packageId})`);
+    }
+
+    // Retrieve package using packageId
+    console.log(`🔍 [INVOICE-CREATE] Retrieving package with ID: ${packageId}...`);
+    const packageData = await Package.findByPk(packageId);
+    if (!packageData) {
+      console.error(`❌ [INVOICE-CREATE] Package ${packageId} not found`);
+      throw new Error("Package not found");
+    }
+    console.log(`✅ [INVOICE-CREATE] Package found:`, {
+      id: packageData.id,
+      package: packageData.package,
+      packageCategory: packageData.packageCategory,
+      vehicleCount: packageData.vehicleCount,
+    });
+
+    // Compute expiry date
+    let expiryDate;
+    console.log(`🕐 [INVOICE-CREATE] Computing expiry date...`);
+    if (stripeSub.current_period_end) {
+      expiryDate = new Date(stripeSub.current_period_end * 1000);
+      console.log(`📅 [INVOICE-CREATE] Using current_period_end: ${expiryDate.toISOString()}`);
+    } else {
+      expiryDate = new Date();
+      expiryDate.setMonth(expiryDate.getMonth() + 1);
+      console.log(`📅 [INVOICE-CREATE] Default fallback (now + 1 month): ${expiryDate.toISOString()}`);
+    }
+
+    if (isNaN(expiryDate.getTime())) {
+      console.error("❌ [INVOICE-CREATE] Invalid expiryDate:", expiryDate);
+      throw new Error("Invalid expiryDate value");
+    }
+    console.log(`✅ [INVOICE-CREATE] Final expiryDate: ${expiryDate.toISOString()}`);
+
+    // Extract price from invoice
+    const price = invoice.amount_paid / 100 || 0;
+    console.log(`💰 [INVOICE-CREATE] Price: ${price}`);
+
+    // Create new subscription
+    console.log(`📝 [INVOICE-CREATE] Creating new subscription for userId: ${userId}...`);
+
+    const subscriptionData = {
+      userId: parseInt(userId, 10),
+      packageId: parseInt(packageId, 10),
+      plan: String(packageData.package).trim(),
+      price: `${price}`,
+      expiryDate: expiryDate instanceof Date ? expiryDate : new Date(expiryDate),
+      stripeSubscriptionId: String(stripeSub.id).trim(),
+      stripeCustomerId: String(stripeSub.customer).trim(),
+      status: "active",
+      isActive: true,
+    };
+
+    console.log(`📝 [INVOICE-CREATE] Subscription data:`, subscriptionData);
+
+    const newSub = await Subscription.create(subscriptionData, {
+      validate: false,
+      logging: (sql) => console.log(`📝 [SQL]: ${sql}`),
+    });
+
+    console.log(`✅ [INVOICE-CREATE] New subscription created:`, {
+      id: newSub.id,
+      userId: newSub.userId,
+      packageId: newSub.packageId,
+      plan: newSub.plan,
+      price: newSub.price,
+      expiryDate: newSub.expiryDate?.toISOString?.(),
+      stripeSubscriptionId: newSub.stripeSubscriptionId,
+      stripeCustomerId: newSub.stripeCustomerId,
+    });
+
+    // Store card details
+    await storeCardDetails(newSub, stripeSub);
+
+    // Log successful payment
+    await logPaymentAttempt({
+      userId: parseInt(userId, 10),
+      subscriptionId: newSub.id,
+      stripeInvoiceId: invoice.id,
+      stripeCustomerId: stripeSub.customer,
+      amount: price,
+      currency: invoice.currency || "usd",
+      status: "succeeded",
+      paymentMethod: invoice.default_payment_method,
+      metadata: {
+        type: "subscription_creation_from_invoice",
+        packageId: packageId,
+        invoiceId: invoice.id
+      }
+    });
+
+    // Update user role and create role-specific records
+    await this.updateUserRoleAndRecords(userId, packageData);
+
+    console.log(`✅ [INVOICE-CREATE] Subscription creation completed for user ${userId}`);
+    
+  } catch (error) {
+    console.error("❌ [INVOICE-CREATE] Error creating subscription from invoice:", error);
+    throw error;
+  }
+};
+
+// New method to renew existing subscription
+o.renewExistingSubscription = async (existingSub, stripeSub, invoice) => {
+  try {
+    console.log(`🔄 [RENEWAL] Renewing subscription ${existingSub.id}`);
 
     // Calculate new expiry date based on subscription interval
     let expiryDate = new Date();
-    const interval = stripeSub.plan?.interval || "month";
-    const count = stripeSub.plan?.interval_count || 1;
-
-    if (interval === "month") {
-      expiryDate.setMonth(expiryDate.getMonth() + count);
-    } else if (interval === "year") {
-      expiryDate.setFullYear(expiryDate.getFullYear() + count);
+    if (stripeSub.current_period_end) {
+      expiryDate = new Date(stripeSub.current_period_end * 1000);
+      console.log(`📅 [RENEWAL] Using current_period_end: ${expiryDate.toISOString()}`);
     } else {
-      expiryDate.setDate(expiryDate.getDate() + 30 * count);
+      const interval = stripeSub.plan?.interval || "month";
+      const count = stripeSub.plan?.interval_count || 1;
+
+      if (interval === "month") {
+        expiryDate.setMonth(expiryDate.getMonth() + count);
+      } else if (interval === "year") {
+        expiryDate.setFullYear(expiryDate.getFullYear() + count);
+      } else {
+        expiryDate.setDate(expiryDate.getDate() + 30 * count);
+      }
+      console.log(`📅 [RENEWAL] Calculated expiry: ${expiryDate.toISOString()}`);
     }
 
     // Update subscription expiry in DB
     await existingSub.update({ 
       expiryDate, 
-      stripeCustomerId,
+      stripeCustomerId: stripeSub.customer,
       status: "active",
       isActive: true
     });
+
+    console.log(`✅ [RENEWAL] Subscription updated with new expiry: ${expiryDate.toISOString()}`);
 
     // Store/update card details
     await storeCardDetails(existingSub, stripeSub);
 
     // Log successful payment
     await logPaymentAttempt({
-      userId: parseInt(userId, 10),
+      userId: existingSub.userId,
       subscriptionId: existingSub.id,
       stripeInvoiceId: invoice.id,
-      stripeCustomerId: stripeCustomerId,
+      stripeCustomerId: stripeSub.customer,
       amount: invoice.amount_paid / 100, // Convert from cents
       currency: invoice.currency,
       status: "succeeded",
@@ -838,15 +1055,187 @@ o.handleInvoicePaid = async (invoice) => {
       metadata: {
         type: "subscription_renewal",
         invoiceId: invoice.id,
-        subscriptionId: subscriptionId
+        subscriptionId: stripeSub.id
       }
     });
 
-    console.log(
-      `🔁 Subscription renewed for user ${userId} until ${expiryDate.toISOString()}`
-    );
-  } catch (err) {
-    console.error("❌ Error handling invoice.payment_succeeded:", err.message);
+    console.log(`🔁 [RENEWAL] Subscription renewed for user ${existingSub.userId} until ${expiryDate.toISOString()}`);
+    
+  } catch (error) {
+    console.error("❌ [RENEWAL] Error renewing subscription:", error);
+    throw error;
+  }
+};
+
+// Extract user role update logic into separate method
+o.updateUserRoleAndRecords = async (userId, packageData) => {
+  try {
+    console.log(`🔍 [ROLE-UPDATE] Retrieving user ${userId}...`);
+    const user = await User.findByPk(userId);
+    if (!user) {
+      console.error(`❌ [ROLE-UPDATE] User ${userId} not found`);
+      throw new Error("User not found");
+    }
+
+    const newRole = packageData.packageCategory;
+    console.log(`🎯 [ROLE-UPDATE] New role from package: ${newRole}`);
+
+    // Update user role based on package
+    if (newRole && user.role !== newRole) {
+      console.log(`🔄 [ROLE-UPDATE] Role change detected: ${user.role} → ${newRole}`);
+      user.role = newRole;
+      await user.save();
+      console.log(`✅ [ROLE-UPDATE] User role updated in database`);
+
+      // Create corresponding role-specific record if not existing
+      await this.createRoleSpecificRecord(userId, newRole, user);
+    }
+
+    // Update role-specific records after role assignment
+    await this.updateRoleSpecificRecords(userId, user.role, packageData);
+
+    // Emit notification to all admins
+    await this.notifyAdmins(user, packageData);
+
+  } catch (error) {
+    console.error("❌ [ROLE-UPDATE] Error updating user role:", error);
+    throw error;
+  }
+};
+
+// Helper method to create role-specific records
+o.createRoleSpecificRecord = async (userId, newRole, user) => {
+  try {
+    if (newRole === "dealer") {
+      const existingDealer = await Dealer.findOne({ where: { userId } });
+      if (!existingDealer) {
+        console.log(`📝 [ROLE-CREATE] Creating new Dealer record...`);
+        const slug = user.fullname.toLowerCase().replace(/ /g, "-").replace(/[^\w-]+/g, "");
+        await Dealer.create({
+          userId,
+          location: user.city || null,
+          status: "nonverified",
+          slug: slug,
+          availableCarListing: 0,
+        });
+        console.log(`✅ [ROLE-CREATE] Dealer record created`);
+      }
+    } else if (newRole === "repair") {
+      const existingRepair = await Repair.findOne({ where: { userId } });
+      if (!existingRepair) {
+        console.log(`📝 [ROLE-CREATE] Creating new Repair record...`);
+        const slug = user.fullname.toLowerCase().replace(/ /g, "-").replace(/[^\w-]+/g, "");
+        await Repair.create({
+          userId,
+          location: user.city || null,
+          status: "nonverified",
+          slug: slug,
+        });
+        console.log(`✅ [ROLE-CREATE] Repair record created`);
+      }
+    } else if (newRole === "detailer") {
+      const existingDetailer = await Detailer.findOne({ where: { userId } });
+      if (!existingDetailer) {
+        console.log(`📝 [ROLE-CREATE] Creating new Detailer record...`);
+        const slug = user.fullname.toLowerCase().replace(/ /g, "-").replace(/[^\w-]+/g, "");
+        await Detailer.create({
+          userId,
+          location: user.city || null,
+          status: "nonverified",
+          slug: slug,
+        });
+        console.log(`✅ [ROLE-CREATE] Detailer record created`);
+      }
+    } else if (newRole === "insurance") {
+      const existingInsurance = await Insurance.findOne({ where: { userId } });
+      if (!existingInsurance) {
+        console.log(`📝 [ROLE-CREATE] Creating new Insurance record...`);
+        const slug = user.fullname.toLowerCase().replace(/ /g, "-").replace(/[^\w-]+/g, "");
+        await Insurance.create({
+          userId,
+          location: user.city || null,
+          status: "nonverified",
+          slug: slug,
+        });
+        console.log(`✅ [ROLE-CREATE] Insurance record created`);
+      }
+    }
+  } catch (error) {
+    console.error("❌ [ROLE-CREATE] Error creating role-specific record:", error);
+    throw error;
+  }
+};
+
+// Helper method to update role-specific records
+o.updateRoleSpecificRecords = async (userId, userRole, packageData) => {
+  try {
+    console.log(`🔄 [ROLE-RECORDS] Updating role-specific records for role: ${userRole}`);
+
+    if (userRole === "dealer") {
+      const existingDealer = await Dealer.findOne({ where: { userId } });
+      let newAvailableCarListing = packageData.vehicleCount || 0;
+
+      if (existingDealer && existingDealer.availableCarListing) {
+        newAvailableCarListing = existingDealer.availableCarListing + (packageData.vehicleCount || 0);
+      }
+
+      await Dealer.update(
+        {
+          availableCarListing: newAvailableCarListing,
+          status: "verified",
+        },
+        { where: { userId } }
+      );
+      console.log(`✅ [ROLE-RECORDS] Dealer verified with ${newAvailableCarListing} total available listings`);
+
+      // Initialize wallet for dealer
+      const existingWallet = await Wallet.findOne({ where: { userId } });
+      if (!existingWallet) {
+        await Wallet.create({
+          userId: parseInt(userId, 10),
+          totalBalance: 0,
+          spentBalance: 0,
+          remainingBalance: 0,
+          transactions: [],
+        });
+        console.log(`✅ [ROLE-RECORDS] Wallet initialized for dealer ${userId}`);
+      }
+    } else if (userRole === "repair") {
+      await Repair.update({ status: "verified" }, { where: { userId } });
+      console.log(`✅ [ROLE-RECORDS] Repair user ${userId} verified`);
+    } else if (userRole === "detailer") {
+      await Detailer.update({ status: "verified" }, { where: { userId } });
+      console.log(`✅ [ROLE-RECORDS] Detailer user ${userId} verified`);
+    } else if (userRole === "insurance") {
+      await Insurance.update({ status: "verified" }, { where: { userId } });
+      console.log(`✅ [ROLE-RECORDS] Insurance user ${userId} verified`);
+    }
+  } catch (error) {
+    console.error("❌ [ROLE-RECORDS] Error updating role-specific records:", error);
+    throw error;
+  }
+};
+
+// Helper method to notify admins
+o.notifyAdmins = async (user, packageData) => {
+  try {
+    const admins = await User.findAll({ where: { role: "admin" } });
+    const io = global.io || null;
+    
+    for (const admin of admins) {
+      await createAndEmitNotification(
+        {
+          senderId: user.id,
+          receiverId: admin.id,
+          type: "admin_alert",
+          content: `${user.fullname} bought the subscription ${packageData.package}`,
+        },
+        io
+      );
+    }
+    console.log(`✅ [NOTIFY] Notifications sent to all admins.`);
+  } catch (error) {
+    console.error("❌ [NOTIFY] Error sending notifications to admins:", error);
   }
 };
 
