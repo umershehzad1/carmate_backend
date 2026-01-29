@@ -196,13 +196,9 @@ o.createCheckoutSession = async function (req, res, next) {
         name: customer.name,
       });
 
-      // ✅ (Optional) Store stripeCustomerId in user record for future use
-      // Uncomment if your User model has a stripeCustomerId field
-      /*
-      user.stripeCustomerId = customerId;
-      await user.save();
-      console.log(`✅ [CHECKOUT] User updated with stripeCustomerId: ${customerId}`);
-      */
+      // ✅ Store stripeCustomerId in user record for future use
+      await user.update({ stripeCustomerId: customerId });
+      console.log(`✅ [CHECKOUT] Stored customer ID in user record`);
     }
 
     // --- Create Checkout Session ---
@@ -517,7 +513,6 @@ o.handleCheckoutSessionCompleted = async (session) => {
       console.error("❌ Full error:", createErr);
       throw createErr;
     }
-    }
 
     // Store card details from Stripe
     await storeCardDetails(subscription, stripeSub);
@@ -538,6 +533,7 @@ o.handleCheckoutSessionCompleted = async (session) => {
         webhookType: session.object
       }
     });
+    }
 
     // --- Retrieve user ---
     console.log(`🔍 [WEBHOOK] Retrieving user ${userId}...`);
@@ -835,6 +831,14 @@ o.handleCheckoutSessionCompleted = async (session) => {
 o.handleInvoicePaid = async (invoice) => {
   try {
     console.log("💳 [INVOICE] Processing invoice payment:", invoice.id);
+    console.log("💳 [INVOICE] Invoice details:", {
+      id: invoice.id,
+      customer: invoice.customer,
+      subscription: invoice.subscription,
+      amount_paid: invoice.amount_paid,
+      currency: invoice.currency,
+      status: invoice.status
+    });
     
     // Get the customer ID from the invoice
     const stripeCustomerId = invoice.customer;
@@ -844,53 +848,81 @@ o.handleInvoicePaid = async (invoice) => {
 
     // Get subscription ID from invoice
     const subscriptionId = invoice.subscription;
+    
     if (!subscriptionId) {
-      console.log("⚠️ [INVOICE] No subscription ID in invoice - might be one-time payment");
+      console.log("⚠️ [INVOICE] No subscription ID in invoice - processing as one-time payment");
+      await o.handleOneTimePayment(invoice, stripeCustomerId);
       return;
     }
 
     console.log(`🔍 [INVOICE] Subscription ID: ${subscriptionId}`);
 
-    // Retrieve subscription details from Stripe
+    // Check if we have existing subscription in our database first
+    const existingSub = await Subscription.findOne({
+      where: { stripeSubscriptionId: subscriptionId },
+      include: [
+        {
+          model: User,
+          as: "user",
+          attributes: ["id", "email", "fullname", "role"]
+        }
+      ]
+    });
+
+    if (existingSub) {
+      console.log("🔄 [INVOICE] Found existing subscription - processing renewal");
+      console.log(`📍 [INVOICE] Existing subscription details:`, {
+        id: existingSub.id,
+        userId: existingSub.userId,
+        plan: existingSub.plan,
+        status: existingSub.status
+      });
+      
+      // Process renewal using existing subscription data
+      await o.renewExistingSubscription(existingSub, invoice);
+      return;
+    }
+
+    // If no existing subscription, retrieve from Stripe and check metadata
+    console.log("🔍 [INVOICE] No existing subscription found - retrieving from Stripe");
     const stripeSub = await stripe.subscriptions.retrieve(subscriptionId);
     console.log(`✅ [INVOICE] Retrieved Stripe subscription: ${stripeSub.id}`);
 
     // Get metadata from subscription
     const { userId, packageId } = stripeSub.metadata || {};
-    console.log(`📍 [INVOICE] Metadata - userId: ${userId}, packageId: ${packageId}`);
+    console.log(`📍 [INVOICE] Stripe metadata - userId: ${userId}, packageId: ${packageId}`);
 
     if (!userId) {
-      console.error("❌ [INVOICE] No userId in subscription metadata");
-      return;
-    }
-
-    // Check if this is the first payment (subscription creation) or renewal
-    const existingSub = await Subscription.findOne({
-      where: { stripeSubscriptionId: subscriptionId },
-    });
-
-    if (!existingSub) {
-      console.log("🆕 [INVOICE] First payment - creating new subscription");
+      // Try to find user by customer ID as fallback
+      console.log("⚠️ [INVOICE] No userId in metadata, trying to find user by customer ID");
+      const user = await User.findOne({
+        where: { stripeCustomerId: stripeCustomerId }
+      });
       
-      // This is the first payment, create subscription (similar to checkout.session.completed)
-      if (!packageId) {
-        console.error("❌ [INVOICE] No packageId in metadata for new subscription");
+      if (!user) {
+        console.error("❌ [INVOICE] Cannot find user by customer ID or metadata");
+        await o.logFailedPayment(invoice, "User not found");
         return;
       }
-
-      // Call the same handler as checkout.session.completed but with invoice data
-      await this.createSubscriptionFromInvoice(invoice, stripeSub, parseInt(userId, 10), parseInt(packageId, 10));
-    } else {
-      console.log("🔄 [INVOICE] Renewal payment - updating existing subscription");
       
-      // This is a renewal, update existing subscription
-      await this.renewExistingSubscription(existingSub, stripeSub, invoice);
+      console.log(`✅ [INVOICE] Found user by customer ID: ${user.id}`);
+      await o.createSubscriptionFromInvoice(invoice, stripeSub, user.id, packageId);
+    } else {
+      console.log("🆕 [INVOICE] First payment - creating new subscription");
+      await o.createSubscriptionFromInvoice(invoice, stripeSub, parseInt(userId, 10), packageId ? parseInt(packageId, 10) : null);
     }
 
-    console.log(`✅ [INVOICE] Successfully processed invoice payment for user ${userId}`);
+    console.log(`✅ [INVOICE] Successfully processed invoice payment`);
   } catch (err) {
     console.error("❌ [INVOICE] Error handling invoice.payment_succeeded:", err.message);
     console.error("❌ [INVOICE] Full error:", err);
+    
+    // Log the failed payment attempt
+    try {
+      await o.logFailedPayment(invoice, err.message);
+    } catch (logErr) {
+      console.error("❌ [INVOICE] Failed to log payment error:", logErr.message);
+    }
   }
 };
 
@@ -900,24 +932,47 @@ o.createSubscriptionFromInvoice = async (invoice, stripeSub, userId, packageId) 
     console.log(`📝 [INVOICE-CREATE] Creating subscription for userId: ${userId}, packageId: ${packageId}`);
 
     // Validate inputs
-    if (!userId || !packageId || isNaN(userId) || isNaN(packageId)) {
-      console.error("❌ [INVOICE-CREATE] Missing userId or packageId");
-      throw new Error(`Missing userId (${userId}) or packageId (${packageId})`);
+    if (!userId || isNaN(userId)) {
+      console.error("❌ [INVOICE-CREATE] Invalid userId");
+      throw new Error(`Invalid userId: ${userId}`);
     }
 
-    // Retrieve package using packageId
-    console.log(`🔍 [INVOICE-CREATE] Retrieving package with ID: ${packageId}...`);
-    const packageData = await Package.findByPk(packageId);
-    if (!packageData) {
-      console.error(`❌ [INVOICE-CREATE] Package ${packageId} not found`);
-      throw new Error("Package not found");
+    // If packageId is missing, try to determine from subscription or use default
+    let packageData = null;
+    if (packageId && !isNaN(packageId)) {
+      console.log(`🔍 [INVOICE-CREATE] Retrieving package with ID: ${packageId}...`);
+      packageData = await Package.findByPk(packageId);
     }
-    console.log(`✅ [INVOICE-CREATE] Package found:`, {
-      id: packageData.id,
-      package: packageData.package,
-      packageCategory: packageData.packageCategory,
-      vehicleCount: packageData.vehicleCount,
-    });
+    
+    if (!packageData) {
+      console.log(`⚠️ [INVOICE-CREATE] Package ${packageId} not found, trying to find by Stripe product`);
+      
+      // Try to find package by Stripe product ID
+      const productId = stripeSub.items?.data?.[0]?.price?.product;
+      if (productId) {
+        packageData = await Package.findOne({
+          where: { stripeProductId: productId }
+        });
+        console.log(`🔍 [INVOICE-CREATE] Found package by product ID: ${packageData?.id}`);
+      }
+    }
+    
+    if (!packageData) {
+      console.log(`⚠️ [INVOICE-CREATE] No package found, using default values`);
+      packageData = {
+        id: null,
+        package: "Unknown Plan",
+        packageCategory: "dealer",
+        vehicleCount: 0
+      };
+    } else {
+      console.log(`✅ [INVOICE-CREATE] Package found:`, {
+        id: packageData.id,
+        package: packageData.package,
+        packageCategory: packageData.packageCategory,
+        vehicleCount: packageData.vehicleCount,
+      });
+    }
 
     // Compute expiry date
     let expiryDate;
@@ -938,7 +993,7 @@ o.createSubscriptionFromInvoice = async (invoice, stripeSub, userId, packageId) 
     console.log(`✅ [INVOICE-CREATE] Final expiryDate: ${expiryDate.toISOString()}`);
 
     // Extract price from invoice
-    const price = invoice.amount_paid / 100 || 0;
+    const price = (invoice.amount_paid / 100) || 0;
     console.log(`💰 [INVOICE-CREATE] Price: ${price}`);
 
     // Create new subscription
@@ -946,9 +1001,8 @@ o.createSubscriptionFromInvoice = async (invoice, stripeSub, userId, packageId) 
 
     const subscriptionData = {
       userId: parseInt(userId, 10),
-      packageId: parseInt(packageId, 10),
       plan: String(packageData.package).trim(),
-      price: `${price}`,
+      price: `$${price}`,
       expiryDate: expiryDate instanceof Date ? expiryDate : new Date(expiryDate),
       stripeSubscriptionId: String(stripeSub.id).trim(),
       stripeCustomerId: String(stripeSub.customer).trim(),
@@ -966,36 +1020,35 @@ o.createSubscriptionFromInvoice = async (invoice, stripeSub, userId, packageId) 
     console.log(`✅ [INVOICE-CREATE] New subscription created:`, {
       id: newSub.id,
       userId: newSub.userId,
-      packageId: newSub.packageId,
       plan: newSub.plan,
-      price: newSub.price,
-      expiryDate: newSub.expiryDate?.toISOString?.(),
+      expiryDate: newSub.expiryDate,
       stripeSubscriptionId: newSub.stripeSubscriptionId,
-      stripeCustomerId: newSub.stripeCustomerId,
     });
 
     // Store card details
-    await storeCardDetails(newSub, stripeSub);
+    await o.storeCardDetails(newSub, stripeSub);
 
     // Log successful payment
-    await logPaymentAttempt({
+    await o.logPaymentAttempt({
       userId: parseInt(userId, 10),
       subscriptionId: newSub.id,
       stripeInvoiceId: invoice.id,
       stripeCustomerId: stripeSub.customer,
-      amount: price,
-      currency: invoice.currency || "usd",
+      amount: price.toString(),
+      currency: invoice.currency || "cad",
       status: "succeeded",
-      paymentMethod: invoice.default_payment_method,
+      paymentMethod: stripeSub.default_payment_method,
       metadata: {
         type: "subscription_creation_from_invoice",
-        packageId: packageId,
+        packageId: packageData.id,
         invoiceId: invoice.id
       }
     });
 
-    // Update user role and create role-specific records
-    await this.updateUserRoleAndRecords(userId, packageData);
+    // Update user role and create role-specific records if package data is available
+    if (packageData.id) {
+      await o.updateUserRoleAndRecords(userId, packageData);
+    }
 
     console.log(`✅ [INVOICE-CREATE] Subscription creation completed for user ${userId}`);
     
@@ -1005,11 +1058,96 @@ o.createSubscriptionFromInvoice = async (invoice, stripeSub, userId, packageId) 
   }
 };
 
+// Helper method to log payment attempts
+o.logPaymentAttempt = async (paymentData) => {
+  try {
+    const {
+      userId,
+      subscriptionId,
+      stripeInvoiceId,
+      stripeCustomerId,
+      amount,
+      currency = "cad",
+      status,
+      paymentMethod,
+      failureReason,
+      metadata = {}
+    } = paymentData;
+
+    console.log(`📝 [PAYMENT-LOG] Logging payment attempt:`, {
+      userId,
+      subscriptionId,
+      stripeInvoiceId,
+      amount,
+      status
+    });
+
+    const paymentLog = await PaymentLog.create({
+      userId: userId || null,
+      subscriptionId: subscriptionId || null,
+      stripePaymentIntentId: stripeInvoiceId, // Using invoice ID as payment intent
+      stripeChargeId: stripeInvoiceId, // Using invoice ID as charge ID
+      amount: parseFloat(amount) || 0,
+      currency: currency.toUpperCase(),
+      status: status,
+      paymentMethod: paymentMethod || null,
+      failureReason: failureReason || null,
+      attemptCount: 1,
+      metadata: {
+        stripeCustomerId,
+        stripeInvoiceId,
+        ...metadata
+      }
+    });
+
+    console.log(`✅ [PAYMENT-LOG] Payment logged with ID: ${paymentLog.id}`);
+    return paymentLog;
+    
+  } catch (error) {
+    console.error("❌ [PAYMENT-LOG] Error logging payment:", error);
+    throw error;
+  }
+};
+
+// Helper method to store card details
+o.storeCardDetails = async (subscription, stripeSub) => {
+  try {
+    if (!stripeSub.default_payment_method) {
+      console.log(`⚠️ [CARD-DETAILS] No default payment method for subscription ${stripeSub.id}`);
+      return;
+    }
+
+    console.log(`🔍 [CARD-DETAILS] Retrieving payment method: ${stripeSub.default_payment_method}`);
+    const paymentMethod = await stripe.paymentMethods.retrieve(stripeSub.default_payment_method);
+    
+    if (paymentMethod.card) {
+      await subscription.updateCardDetails({
+        last4: paymentMethod.card.last4,
+        brand: paymentMethod.card.brand,
+        exp_month: paymentMethod.card.exp_month,
+        exp_year: paymentMethod.card.exp_year,
+        payment_method_id: paymentMethod.id,
+        cardholder_name: paymentMethod.billing_details?.name,
+        billing_address: paymentMethod.billing_details?.address
+      });
+      
+      console.log(`✅ [CARD-DETAILS] Card details stored: **** **** **** ${paymentMethod.card.last4}`);
+    }
+    
+  } catch (error) {
+    console.log(`⚠️ [CARD-DETAILS] Could not store card details: ${error.message}`);
+  }
+};
+
 // New method to renew existing subscription
-o.renewExistingSubscription = async (existingSub, stripeSub, invoice) => {
+o.renewExistingSubscription = async (existingSub, invoice) => {
   try {
     console.log(`🔄 [RENEWAL] Renewing subscription ${existingSub.id}`);
+    console.log(`🔄 [RENEWAL] Current expiry: ${existingSub.expiryDate}`);
 
+    // Get the Stripe subscription to get current period end
+    const stripeSub = await stripe.subscriptions.retrieve(existingSub.stripeSubscriptionId);
+    
     // Calculate new expiry date based on subscription interval
     let expiryDate = new Date();
     if (stripeSub.current_period_end) {
@@ -1018,40 +1156,58 @@ o.renewExistingSubscription = async (existingSub, stripeSub, invoice) => {
     } else {
       const interval = stripeSub.plan?.interval || "month";
       const count = stripeSub.plan?.interval_count || 1;
-
+      
       if (interval === "month") {
         expiryDate.setMonth(expiryDate.getMonth() + count);
       } else if (interval === "year") {
         expiryDate.setFullYear(expiryDate.getFullYear() + count);
       } else {
-        expiryDate.setDate(expiryDate.getDate() + 30 * count);
+        expiryDate.setMonth(expiryDate.getMonth() + 1); // Default to 1 month
       }
-      console.log(`📅 [RENEWAL] Calculated expiry: ${expiryDate.toISOString()}`);
+      console.log(`📅 [RENEWAL] Calculated expiry (${interval}): ${expiryDate.toISOString()}`);
     }
 
-    // Update subscription expiry in DB
-    await existingSub.update({ 
-      expiryDate, 
-      stripeCustomerId: stripeSub.customer,
+    // Update subscription
+    await existingSub.update({
+      expiryDate: expiryDate,
       status: "active",
-      isActive: true
+      isActive: true,
+      updatedAt: new Date()
     });
 
-    console.log(`✅ [RENEWAL] Subscription updated with new expiry: ${expiryDate.toISOString()}`);
+    console.log(`✅ [RENEWAL] Updated subscription expiry to: ${expiryDate.toISOString()}`);
 
-    // Store/update card details
-    await storeCardDetails(existingSub, stripeSub);
+    // Store card details if available
+    if (stripeSub.default_payment_method) {
+      try {
+        const paymentMethod = await stripe.paymentMethods.retrieve(stripeSub.default_payment_method);
+        if (paymentMethod.card) {
+          await existingSub.updateCardDetails({
+            last4: paymentMethod.card.last4,
+            brand: paymentMethod.card.brand,
+            exp_month: paymentMethod.card.exp_month,
+            exp_year: paymentMethod.card.exp_year,
+            payment_method_id: paymentMethod.id,
+            cardholder_name: paymentMethod.billing_details?.name,
+            billing_address: paymentMethod.billing_details?.address
+          });
+          console.log(`✅ [RENEWAL] Updated card details`);
+        }
+      } catch (cardErr) {
+        console.log(`⚠️ [RENEWAL] Could not update card details: ${cardErr.message}`);
+      }
+    }
 
     // Log successful payment
-    await logPaymentAttempt({
+    await o.logPaymentAttempt({
       userId: existingSub.userId,
       subscriptionId: existingSub.id,
       stripeInvoiceId: invoice.id,
-      stripeCustomerId: stripeSub.customer,
-      amount: invoice.amount_paid / 100, // Convert from cents
-      currency: invoice.currency,
+      stripeCustomerId: invoice.customer,
+      amount: (invoice.amount_paid / 100).toString(),
+      currency: invoice.currency || "cad",
       status: "succeeded",
-      paymentMethod: invoice.default_payment_method,
+      paymentMethod: stripeSub.default_payment_method,
       metadata: {
         type: "subscription_renewal",
         invoiceId: invoice.id,
@@ -1059,11 +1215,83 @@ o.renewExistingSubscription = async (existingSub, stripeSub, invoice) => {
       }
     });
 
-    console.log(`🔁 [RENEWAL] Subscription renewed for user ${existingSub.userId} until ${expiryDate.toISOString()}`);
+    console.log(`✅ [RENEWAL] Subscription renewal completed for user ${existingSub.userId}`);
     
   } catch (error) {
     console.error("❌ [RENEWAL] Error renewing subscription:", error);
     throw error;
+  }
+};
+
+// New method to handle one-time payments
+o.handleOneTimePayment = async (invoice, stripeCustomerId) => {
+  try {
+    console.log(`💰 [ONE-TIME] Processing one-time payment: ${invoice.id}`);
+    
+    // Find user by Stripe customer ID
+    const user = await User.findOne({
+      where: { stripeCustomerId: stripeCustomerId }
+    });
+
+    if (!user) {
+      console.error(`❌ [ONE-TIME] User not found for customer: ${stripeCustomerId}`);
+      await o.logFailedPayment(invoice, "User not found for one-time payment");
+      return;
+    }
+
+    console.log(`✅ [ONE-TIME] Found user: ${user.id} (${user.email})`);
+
+    // Log the one-time payment
+    await o.logPaymentAttempt({
+      userId: user.id,
+      subscriptionId: null, // No subscription for one-time payments
+      stripeInvoiceId: invoice.id,
+      stripeCustomerId: stripeCustomerId,
+      amount: (invoice.amount_paid / 100).toString(),
+      currency: invoice.currency || "cad",
+      status: "succeeded",
+      paymentMethod: invoice.default_payment_method,
+      metadata: {
+        type: "one_time_payment",
+        invoiceId: invoice.id,
+        description: invoice.description || "One-time payment"
+      }
+    });
+
+    console.log(`✅ [ONE-TIME] One-time payment logged for user ${user.id}`);
+    
+  } catch (error) {
+    console.error("❌ [ONE-TIME] Error handling one-time payment:", error);
+    throw error;
+  }
+};
+
+// New method to log failed payments
+o.logFailedPayment = async (invoice, reason) => {
+  try {
+    console.log(`❌ [FAILED-LOG] Logging failed payment: ${invoice.id}`);
+    
+    await o.logPaymentAttempt({
+      userId: null, // May not have user ID
+      subscriptionId: null,
+      stripeInvoiceId: invoice.id,
+      stripeCustomerId: invoice.customer,
+      amount: (invoice.amount_paid / 100).toString(),
+      currency: invoice.currency || "cad",
+      status: "failed",
+      failureReason: reason,
+      paymentMethod: invoice.default_payment_method,
+      metadata: {
+        type: "failed_payment",
+        invoiceId: invoice.id,
+        error: reason
+      }
+    });
+
+    console.log(`✅ [FAILED-LOG] Failed payment logged`);
+    
+  } catch (error) {
+    console.error("❌ [FAILED-LOG] Error logging failed payment:", error);
   }
 };
 

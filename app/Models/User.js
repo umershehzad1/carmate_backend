@@ -86,6 +86,11 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: "user",
       },
       resetPasswordCode: DataTypes.STRING,
+      stripeCustomerId: { 
+        type: DataTypes.STRING, 
+        allowNull: true, 
+        unique: true 
+      },
     },
     {
       sequelize,
