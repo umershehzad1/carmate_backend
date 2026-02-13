@@ -175,9 +175,43 @@ o.createCheckoutSession = async function (req, res, next) {
     // If you don't have this field, skip this step
     if (user.stripeCustomerId) {
       console.log(
-        `✅ [CHECKOUT] Found existing Stripe customer: ${user.stripeCustomerId}`
+        `✅ [CHECKOUT] Found existing Stripe customer ID in database: ${user.stripeCustomerId}`
       );
-      customerId = user.stripeCustomerId;
+      
+      // Verify the customer exists in Stripe
+      try {
+        const existingCustomer = await stripe.customers.retrieve(user.stripeCustomerId);
+        if (existingCustomer && !existingCustomer.deleted) {
+          customerId = user.stripeCustomerId;
+          console.log(`✅ [CHECKOUT] Verified Stripe customer exists: ${customerId}`);
+        } else {
+          console.log(`⚠️ [CHECKOUT] Stripe customer was deleted, creating new one...`);
+          throw new Error('Customer deleted');
+        }
+      } catch (verifyError) {
+        console.log(`⚠️ [CHECKOUT] Stripe customer verification failed: ${verifyError.message}`);
+        console.log(`📝 [CHECKOUT] Creating new Stripe customer...`);
+        
+        // Create new customer since the old one doesn't exist
+        const customer = await stripe.customers.create({
+          email: user.email,
+          name: user.fullname || "Unknown User",
+          metadata: {
+            userId: String(userId),
+          },
+        });
+
+        customerId = customer.id;
+        console.log(`✅ [CHECKOUT] New Stripe customer created:`, {
+          id: customer.id,
+          email: customer.email,
+          name: customer.name,
+        });
+
+        // Update user record with new customer ID
+        await user.update({ stripeCustomerId: customerId });
+        console.log(`✅ [CHECKOUT] Updated user record with new customer ID`);
+      }
     } else {
       // Option 2: Create new Stripe customer
       console.log(`📝 [CHECKOUT] Creating new Stripe customer...`);
