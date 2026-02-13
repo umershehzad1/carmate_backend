@@ -30,11 +30,18 @@ router.post(
       console.log("🔍 [WEBHOOK] Constructing Stripe event...");
       console.log("🔍 [WEBHOOK] Using webhook secret:", process.env.STRIPE_WEBHOOK_SECRET ? "✅ Set" : "❌ Missing");
       
-      event = stripe.webhooks.constructEvent(
-        req.body,
-        sig,
-        process.env.STRIPE_WEBHOOK_SECRET
-      );
+      // For local testing with ngrok, you can temporarily skip signature verification
+      if (process.env.NODE_ENV === 'development' && !process.env.STRIPE_WEBHOOK_SECRET) {
+        console.log("⚠️ [WEBHOOK] Development mode - parsing event without signature verification");
+        event = JSON.parse(req.body.toString());
+      } else {
+        event = stripe.webhooks.constructEvent(
+          req.body,
+          sig,
+          process.env.STRIPE_WEBHOOK_SECRET
+        );
+      }
+      
       console.log(`✅ [WEBHOOK] Webhook verified: ${event.type}`);
       console.log(`🔍 [WEBHOOK] Event ID: ${event.id}`);
       console.log(`🔍 [WEBHOOK] Event created: ${new Date(event.created * 1000).toISOString()}`);
